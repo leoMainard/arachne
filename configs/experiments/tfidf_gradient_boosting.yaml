@@ -1,0 +1,19 @@
+experiment:
+  name: "tfidf_gradient_boosting"
+  description: "TF-IDF + Gradient Boosting (sklearn HistGradientBoosting)"
+
+features:
+  type: "tfidf"
+  params:
+    max_features: 10000
+    ngram_range: [1, 2]
+    sublinear_tf: true
+    min_df: 2
+
+model:
+  type: "gradient_boosting"
+  params:
+    max_iter: 300
+    learning_rate: 0.1
+    max_depth: 6
+    random_state: 42

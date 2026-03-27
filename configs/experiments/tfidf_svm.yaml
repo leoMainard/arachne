@@ -1,0 +1,18 @@
+experiment:
+  name: "tfidf_svm"
+  description: "TF-IDF bigrams + LinearSVC"
+
+features:
+  type: "tfidf"
+  params:
+    max_features: 15000
+    ngram_range: [1, 2]
+    sublinear_tf: true
+    min_df: 2
+
+model:
+  type: "linear_svc"
+  params:
+    C: 1.0
+    max_iter: 2000
+    class_weight: "balanced"

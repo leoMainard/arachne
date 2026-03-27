@@ -1,0 +1,26 @@
+# Base configuration — overridden by experiment configs
+data:
+  source: "local"           # "local" or "postgresql"
+  local_path: "data/tables.parquet"
+  test_size: 0.2
+  val_size: 0.1
+  stratify: true
+  random_seed: 42
+  labels:
+    - batiment
+    - vehicule
+    - sinistre
+    - autre
+
+preprocessing:
+  header_rows: 1
+  header_weight: 3          # repeat header text N times for weighting
+  max_content_cells: 200
+
+training:
+  cv_folds: 5
+  scoring: "accuracy"
+
+tracking:
+  save_model: true
+  output_dir: "models"
