@@ -1,0 +1,29 @@
+experiment:
+  name: "camembert"
+  description: "CamemBERT fine-tuning (requires GPU recommended)"
+
+preprocessing:
+  header_rows: 1
+  header_weight: 3
+  max_content_cells: 100
+  max_length: 512
+
+features:
+  type: "transformer_tokenizer"
+  model_name: "camembert-base"
+
+model:
+  type: "camembert"
+  params:
+    model_name: "camembert-base"
+    num_labels: 4
+    dropout: 0.1
+
+training:
+  cv_folds: 0              # no CV for transformer (use val set instead)
+  epochs: 5
+  batch_size: 16
+  learning_rate: 2.0e-5
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  device: "auto"           # "auto", "cpu", "cuda"

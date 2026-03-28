@@ -1,0 +1,20 @@
+experiment:
+  name: "tfidf_logistic"
+  description: "TF-IDF bigrams + Logistic Regression (baseline)"
+
+features:
+  type: "tfidf"
+  params:
+    max_features: 15000
+    ngram_range: [1, 2]
+    sublinear_tf: true
+    min_df: 2
+    analyzer: "word"
+
+model:
+  type: "logistic_regression"
+  params:
+    C: 1.0
+    max_iter: 1000
+    class_weight: "balanced"
+    solver: "lbfgs"

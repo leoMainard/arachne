@@ -1,0 +1,30 @@
+# Configuration de production pour l'inférence Arachne
+#
+# Utilisation :
+#   import yaml
+#   from production.preprocesseur import PreprocesseurProduction
+#   from production.classifieur import ClassifieurProduction
+#   from production.tableau import Tableau
+#
+#   with open("production/config_production.yaml") as f:
+#       config = yaml.safe_load(f)
+#
+#   preprocesseur = PreprocesseurProduction(config)
+#   classifieur   = ClassifieurProduction(config)
+#
+#   tableau = Tableau(data=[[...], [...]])
+#   label   = tableau.predict(preprocesseur, classifieur)
+#   probs   = tableau.predict_proba(preprocesseur, classifieur)
+
+modele:
+  # Chemin vers le répertoire d'expérience à utiliser en production.
+  # Le modèle et sa configuration de prétraitement y sont lus automatiquement.
+  repertoire_experience: "models/tfidf_logistic_20260328_230959"
+
+# Section optionnelle : surcharge des paramètres de prétraitement de l'expérience.
+# Si absente, les paramètres de l'expérience sont utilisés tels quels (recommandé).
+#
+# preprocessing:
+#   header_rows: 1
+#   header_weight: 3
+#   max_content_cells: 200
