@@ -1,4 +1,4 @@
-"""Training pipeline with optional cross-validation."""
+"""Pipeline d'entraînement avec validation croisée optionnelle."""
 from __future__ import annotations
 
 import time
@@ -10,171 +10,197 @@ from rich.table import Table
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.pipeline import Pipeline
 
-from arachne.data.loader import load_data
-from arachne.data.preprocessing import split_dataset, tables_to_texts
-from arachne.models import get_model
-from arachne.training.evaluator import compute_metrics, save_confusion_matrix, save_metrics_plot
-from arachne.tracking.tracker import ExperimentTracker
+from arachne.constants import LABELS
+from arachne.data.loader import ChargeurDonnees
+from arachne.data.preprocessing import Preprocesseur, decouper_dataset
+from arachne.features.extractors import obtenir_extracteur
+from arachne.models import obtenir_modele
+from arachne.models.classical import ClassifieurClassique, _construire_classifieur_sklearn
+from arachne.tracking.tracker import SuiveurExperience
+from arachne.training.evaluator import (
+    calculer_metriques,
+    sauvegarder_graphique_metriques,
+    sauvegarder_matrice_confusion,
+)
 
 console = Console()
 
 
-def run_experiment(config: dict) -> dict:
-    """Run a full training experiment from config.
+def executer_experience(config: dict) -> dict:
+    """Exécute une expérience d'entraînement complète depuis une configuration YAML.
 
-    Returns the experiment metrics dict.
+    Étapes : chargement → découpage → prétraitement → modèle →
+    validation croisée → entraînement final → évaluation → sauvegarde.
+
+    Args:
+        config: Configuration fusionnée (base.yaml + experiment.yaml).
+
+    Retours:
+        Dictionnaire récapitulatif de l'expérience (métriques, chemins, etc.).
     """
-    exp_name = config.get("experiment", {}).get("name", "experiment")
-    exp_description = config.get("experiment", {}).get("description", "")
-    data_config = config["data"]
-    preprocessing_config = config.get("preprocessing", {})
-    training_config = config.get("training", {})
+    nom_exp = config.get("experiment", {}).get("name", "experience")
+    description = config.get("experiment", {}).get("description", "")
+    config_donnees = config["data"]
+    config_preprocessing = config.get("preprocessing", {})
+    config_entrainement = config.get("training", {})
 
-    tracker = ExperimentTracker(
-        experiment_name=exp_name,
-        output_dir=Path(config.get("tracking", {}).get("output_dir", "models")),
+    suiveur = SuiveurExperience(
+        nom_experience=nom_exp,
+        repertoire_sortie=Path(config.get("tracking", {}).get("output_dir", "models")),
     )
-    tracker.log_config(config)
+    suiveur.enregistrer_config(config)
 
-    console.rule(f"[bold blue]{exp_name}")
-    if exp_description:
-        console.print(f"[dim]{exp_description}[/dim]")
+    console.rule(f"[bold blue]{nom_exp}")
+    if description:
+        console.print(f"[dim]{description}[/dim]")
 
-    # --- Load data ---
-    console.print("\n[bold]1. Loading data...[/bold]")
-    df = load_data(config)
-    console.print(f"   Loaded {len(df)} samples.")
-    console.print(f"   Class distribution:\n{df['label'].value_counts().to_string()}")
+    # 1. Chargement des données
+    console.print("\n[bold]1. Chargement des données...[/bold]")
+    chargeur = ChargeurDonnees(config)
+    df = chargeur.charger()
+    console.print(f"   {len(df)} échantillons chargés.")
+    console.print(f"   Distribution des classes :\n{df['label'].value_counts().to_string()}")
 
-    # --- Split ---
-    df_train, df_val, df_test = split_dataset(
+    # 2. Découpage train / val / test
+    df_train, df_val, df_test = decouper_dataset(
         df,
-        test_size=data_config.get("test_size", 0.2),
-        val_size=data_config.get("val_size", 0.1),
-        stratify=data_config.get("stratify", True),
-        random_seed=data_config.get("random_seed", 42),
+        taille_test=config_donnees.get("test_size", 0.2),
+        taille_val=config_donnees.get("val_size", 0.1),
+        stratifier=config_donnees.get("stratify", True),
+        graine=config_donnees.get("random_seed", 42),
     )
-    console.print(f"\n   Split: train={len(df_train)}, val={len(df_val)}, test={len(df_test)}")
-
-    tracker.log_data_info(
+    console.print(
+        f"\n   Découpage : train={len(df_train)}, val={len(df_val)}, test={len(df_test)}"
+    )
+    suiveur.enregistrer_info_donnees(
         n_train=len(df_train),
         n_val=len(df_val),
         n_test=len(df_test),
-        class_distribution=df["label"].value_counts().to_dict(),
+        distribution_classes=df["label"].value_counts().to_dict(),
     )
 
-    # --- Preprocess to text ---
-    console.print("\n[bold]2. Preprocessing tables to text...[/bold]")
-    texts_train = tables_to_texts(df_train["table_data"].tolist(), preprocessing_config)
-    texts_val = tables_to_texts(df_val["table_data"].tolist(), preprocessing_config)
-    texts_test = tables_to_texts(df_test["table_data"].tolist(), preprocessing_config)
+    # 3. Prétraitement des tableaux en texte
+    console.print("\n[bold]2. Prétraitement des tableaux...[/bold]")
+    preprocesseur = Preprocesseur.depuis_config(config_preprocessing)
+    textes_train = preprocesseur.transformer_lot(df_train["table_data"].tolist())
+    textes_val = preprocesseur.transformer_lot(df_val["table_data"].tolist())
+    textes_test = preprocesseur.transformer_lot(df_test["table_data"].tolist())
 
     labels_train = df_train["label"].tolist()
     labels_val = df_val["label"].tolist()
     labels_test = df_test["label"].tolist()
 
-    classes = sorted(data_config.get("labels", ["batiment", "vehicule", "sinistre", "autre"]))
+    classes = sorted(config_donnees.get("labels", LABELS))
 
-    # --- Build model ---
-    console.print("\n[bold]3. Building model...[/bold]")
-    model = get_model(config.get("model", {}), config.get("features", {}))
+    # 4. Construction du modèle
+    console.print("\n[bold]3. Construction du modèle...[/bold]")
+    modele = obtenir_modele(config.get("model", {}), config.get("features", {}))
 
-    # --- Cross-validation (classical models only) ---
-    cv_folds = training_config.get("cv_folds", 5)
-    cv_results: dict = {}
+    # 5. Validation croisée (modèles classiques uniquement)
+    nb_folds = config_entrainement.get("cv_folds", 5)
+    if nb_folds and nb_folds > 1 and isinstance(modele, ClassifieurClassique):
+        console.print(f"\n[bold]4. Validation croisée ({nb_folds} folds)...[/bold]")
 
-    if cv_folds and cv_folds > 1:
-        console.print(f"\n[bold]4. Cross-validation ({cv_folds} folds)...[/bold]")
-
-        # For CV we use a fresh pipeline fitted on train+val texts
-        texts_tv = texts_train + texts_val
+        textes_tv = textes_train + textes_val
         labels_tv = labels_train + labels_val
 
-        from arachne.models.classical import ClassicalClassifier
-        if isinstance(model, ClassicalClassifier):
-            from arachne.features.extractors import get_feature_extractor
-            from arachne.models.classical import _build_sklearn_classifier
-            cv_pipeline = Pipeline([
-                ("vectorizer", get_feature_extractor(config.get("features", {}))),
-                ("classifier", _build_sklearn_classifier(config.get("model", {}))),
-            ])
-            skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=data_config.get("random_seed", 42))
-            fold_scores = cross_val_score(
-                cv_pipeline, texts_tv, labels_tv,
-                cv=skf, scoring=training_config.get("scoring", "accuracy"), n_jobs=-1,
-            )
-            cv_results = {
-                "mean_accuracy": round(float(np.mean(fold_scores)), 4),
-                "std_accuracy": round(float(np.std(fold_scores)), 4),
-                "fold_scores": [round(float(s), 4) for s in fold_scores],
-            }
-            console.print(
-                f"   CV accuracy: {cv_results['mean_accuracy']:.4f} ± {cv_results['std_accuracy']:.4f}"
-            )
-            tracker.log_cv_results(cv_results)
-        else:
-            console.print("   [yellow]CV skipped for transformer models.[/yellow]")
-
-    # --- Train final model ---
-    console.print("\n[bold]5. Training final model...[/bold]")
-    t0 = time.time()
-    model.fit(texts_train, labels_train, texts_val, labels_val)
-    duration = time.time() - t0
-    console.print(f"   Training completed in {duration:.1f}s")
-
-    # --- Evaluate ---
-    console.print("\n[bold]6. Evaluating on test set...[/bold]")
-    y_pred = model.predict(texts_test)
-    test_metrics = compute_metrics(labels_test, y_pred, classes)
-
-    console.print(f"   Accuracy:    {test_metrics['accuracy']:.4f}")
-    console.print(f"   Macro F1:    {test_metrics['macro_f1']:.4f}")
-    console.print(f"   Weighted F1: {test_metrics['weighted_f1']:.4f}")
-
-    _print_per_class_table(test_metrics["per_class"])
-
-    tracker.log_test_metrics(test_metrics)
-    tracker.log_duration(duration)
-
-    # --- Save plots ---
-    plots_dir = tracker.experiment_dir / "plots"
-    save_confusion_matrix(
-        labels_test, y_pred, classes,
-        output_path=plots_dir / "confusion_matrix.png",
-        title=exp_name,
-    )
-    save_metrics_plot(
-        test_metrics,
-        output_path=plots_dir / "per_class_metrics.png",
-        title=f"{exp_name} — Per-class metrics",
-    )
-
-    # --- Save model ---
-    if config.get("tracking", {}).get("save_model", True):
-        console.print("\n[bold]7. Saving model...[/bold]")
-        model.save(tracker.experiment_dir / "model")
-        console.print(f"   Saved to: {tracker.experiment_dir}")
-
-    tracker.finalize()
-    console.print(f"\n[bold green]Done! Results saved to: {tracker.experiment_dir}[/bold green]")
-
-    return tracker.get_summary()
-
-
-def _print_per_class_table(per_class: dict) -> None:
-    table = Table(title="Per-class metrics", show_header=True)
-    table.add_column("Class", style="cyan")
-    table.add_column("Precision", justify="right")
-    table.add_column("Recall", justify="right")
-    table.add_column("F1", justify="right")
-    table.add_column("Support", justify="right")
-
-    for label, metrics in per_class.items():
-        table.add_row(
-            label,
-            f"{metrics['precision']:.4f}",
-            f"{metrics['recall']:.4f}",
-            f"{metrics['f1']:.4f}",
-            str(metrics['support']),
+        pipeline_cv = Pipeline([
+            ("vectoriseur", obtenir_extracteur(config.get("features", {}))),
+            ("classifieur", _construire_classifieur_sklearn(config.get("model", {}))),
+        ])
+        skf = StratifiedKFold(
+            n_splits=nb_folds,
+            shuffle=True,
+            random_state=config_donnees.get("random_seed", 42),
         )
-    console.print(table)
+        scores_folds = cross_val_score(
+            pipeline_cv, textes_tv, labels_tv,
+            cv=skf,
+            scoring=config_entrainement.get("scoring", "accuracy"),
+            n_jobs=-1,
+        )
+        resultats_cv = {
+            "mean_accuracy": round(float(np.mean(scores_folds)), 4),
+            "std_accuracy": round(float(np.std(scores_folds)), 4),
+            "fold_scores": [round(float(s), 4) for s in scores_folds],
+        }
+        console.print(
+            f"   Accuracy CV : {resultats_cv['mean_accuracy']:.4f} "
+            f"± {resultats_cv['std_accuracy']:.4f}"
+        )
+        suiveur.enregistrer_resultats_cv(resultats_cv)
+    else:
+        if nb_folds and nb_folds > 1:
+            console.print(
+                "\n[yellow]   Validation croisée ignorée pour les modèles transformer.[/yellow]"
+            )
+
+    # 6. Entraînement final
+    console.print("\n[bold]5. Entraînement du modèle final...[/bold]")
+    t0 = time.time()
+    modele.entrainer(textes_train, labels_train, textes_val, labels_val)
+    duree = time.time() - t0
+    console.print(f"   Entraînement terminé en {duree:.1f}s")
+
+    # 7. Évaluation sur le jeu de test
+    console.print("\n[bold]6. Évaluation sur le jeu de test...[/bold]")
+    y_predit = modele.predire(textes_test)
+    metriques_test = calculer_metriques(labels_test, y_predit, classes)
+
+    console.print(f"   Accuracy    : {metriques_test['accuracy']:.4f}")
+    console.print(f"   Macro F1    : {metriques_test['macro_f1']:.4f}")
+    console.print(f"   Weighted F1 : {metriques_test['weighted_f1']:.4f}")
+    _afficher_tableau_par_classe(metriques_test["par_classe"])
+
+    suiveur.enregistrer_metriques_test(metriques_test)
+    suiveur.enregistrer_duree(duree)
+
+    # 8. Génération des graphiques
+    repertoire_plots = suiveur.repertoire_experience / "plots"
+    sauvegarder_matrice_confusion(
+        labels_test, y_predit, classes,
+        chemin_sortie=repertoire_plots / "matrice_confusion.png",
+        titre=nom_exp,
+    )
+    sauvegarder_graphique_metriques(
+        metriques_test,
+        chemin_sortie=repertoire_plots / "metriques_par_classe.png",
+        titre=f"{nom_exp} — Métriques par classe",
+    )
+
+    # 9. Sauvegarde du modèle
+    if config.get("tracking", {}).get("save_model", True):
+        console.print("\n[bold]7. Sauvegarde du modèle...[/bold]")
+        modele.sauvegarder(suiveur.repertoire_experience / "model")
+        console.print(f"   Sauvegardé dans : {suiveur.repertoire_experience}")
+
+    suiveur.finaliser()
+    console.print(
+        f"\n[bold green]Terminé ! Résultats sauvegardés dans : {suiveur.repertoire_experience}[/bold green]"
+    )
+
+    return suiveur.obtenir_resume()
+
+
+def _afficher_tableau_par_classe(par_classe: dict) -> None:
+    """Affiche un tableau Rich des métriques par classe dans le terminal.
+
+    Args:
+        par_classe: Dictionnaire {classe: {precision, rappel, f1, support}}.
+    """
+    tableau = Table(title="Métriques par classe", show_header=True)
+    tableau.add_column("Classe", style="cyan")
+    tableau.add_column("Précision", justify="right")
+    tableau.add_column("Rappel", justify="right")
+    tableau.add_column("F1", justify="right")
+    tableau.add_column("Support", justify="right")
+
+    for label, metriques in par_classe.items():
+        tableau.add_row(
+            label,
+            f"{metriques['precision']:.4f}",
+            f"{metriques['rappel']:.4f}",
+            f"{metriques['f1']:.4f}",
+            str(metriques["support"]),
+        )
+    console.print(tableau)

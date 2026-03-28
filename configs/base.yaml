@@ -1,7 +1,7 @@
-# Base configuration — overridden by experiment configs
+# Configuration de base — surchargée par les configs d'expériences
 data:
-  source: "local"           # "local" or "postgresql"
-  local_path: "data/tables.parquet"
+  source: "local"
+  local_path: "data/tables_test.parquet"
   test_size: 0.2
   val_size: 0.1
   stratify: true
@@ -14,7 +14,7 @@ data:
 
 preprocessing:
   header_rows: 1
-  header_weight: 3          # repeat header text N times for weighting
+  header_weight: 3
   max_content_cells: 200
 
 training:

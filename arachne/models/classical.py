@@ -1,4 +1,4 @@
-"""Classical ML classifiers (sklearn pipelines)."""
+"""Classifieurs ML classiques basés sur des pipelines scikit-learn."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,89 +6,160 @@ from pathlib import Path
 import joblib
 import numpy as np
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.svm import LinearSVC
 
-from arachne.features.extractors import get_feature_extractor
-from arachne.models.base import BaseTableClassifier
+from arachne.constants import TypeModele
+from arachne.features.extractors import obtenir_extracteur
+from arachne.models.base import ClassifieurBase
 
 
-MODEL_FILE = "pipeline.joblib"
+FICHIER_MODELE = "pipeline.joblib"
 
 
-def _build_sklearn_classifier(model_config: dict):
-    """Instantiate a sklearn classifier from config."""
-    model_type = model_config["type"]
-    params = model_config.get("params", {})
+def _construire_classifieur_sklearn(config_modele: dict):
+    """Instancie le classifieur sklearn correspondant à la configuration.
 
-    if model_type == "logistic_regression":
+    Args:
+        config_modele: Section ``model`` du fichier YAML (type + params).
+
+    Retours:
+        Estimateur sklearn non entraîné.
+
+    Raises:
+        ValueError: Si le type de modèle est inconnu.
+    """
+    type_modele = config_modele["type"]
+    params = config_modele.get("params", {})
+
+    if type_modele == TypeModele.REGRESSION_LOGISTIQUE:
         return LogisticRegression(**params)
-    elif model_type == "linear_svc":
-        # LinearSVC doesn't have predict_proba; wrap with calibration
+    elif type_modele == TypeModele.SVM_LINEAIRE:
+        # LinearSVC n'implémente pas predict_proba nativement ;
+        # on l'encapsule dans CalibratedClassifierCV pour obtenir des probabilités.
         svc = LinearSVC(**params)
         return CalibratedClassifierCV(svc, cv=3)
-    elif model_type == "random_forest":
+    elif type_modele == TypeModele.FORET_ALEATOIRE:
         return RandomForestClassifier(**params)
-    elif model_type == "gradient_boosting":
+    elif type_modele == TypeModele.GRADIENT_BOOSTING:
         return HistGradientBoostingClassifier(**params)
     else:
+        types_disponibles = [t.value for t in TypeModele if t != TypeModele.CAMEMBERT]
         raise ValueError(
-            f"Unknown classical model type: '{model_type}'. "
-            "Available: logistic_regression, linear_svc, random_forest, gradient_boosting"
+            f"Type de modèle classique inconnu : '{type_modele}'. "
+            f"Types disponibles : {types_disponibles}"
         )
 
 
-class ClassicalClassifier(BaseTableClassifier):
-    """sklearn Pipeline: TF-IDF vectorizer + classifier."""
+class ClassifieurClassique(ClassifieurBase):
+    """Classifieur basé sur un pipeline sklearn : vectoriseur TF-IDF + classifieur.
 
-    def __init__(self, model_config: dict, features_config: dict):
-        self._model_config = model_config
-        self._features_config = features_config
+    Args:
+        config_modele: Section ``model`` du fichier YAML.
+        config_features: Section ``features`` du fichier YAML.
+
+    Exemple:
+        >>> clf = ClassifieurClassique(config_modele, config_features)
+        >>> clf.entrainer(textes_train, labels_train)
+        >>> predictions = clf.predire(textes_test)
+    """
+
+    def __init__(self, config_modele: dict, config_features: dict) -> None:
+        self._config_modele = config_modele
+        self._config_features = config_features
         self._pipeline: Pipeline | None = None
         self._classes: list[str] = []
 
-    def fit(
+    def entrainer(
         self,
-        texts_train: list[str],
+        textes_train: list[str],
         labels_train: list[str],
-        texts_val: list[str] | None = None,
+        textes_val: list[str] | None = None,
         labels_val: list[str] | None = None,
     ) -> None:
-        vectorizer = get_feature_extractor(self._features_config)
-        classifier = _build_sklearn_classifier(self._model_config)
+        """Entraîne le pipeline TF-IDF + classifieur.
+
+        Args:
+            textes_train: Textes d'entraînement.
+            labels_train: Labels d'entraînement.
+            textes_val: Non utilisé pour les modèles classiques.
+            labels_val: Non utilisé pour les modèles classiques.
+        """
+        vectoriseur = obtenir_extracteur(self._config_features)
+        classifieur = _construire_classifieur_sklearn(self._config_modele)
 
         self._pipeline = Pipeline([
-            ("vectorizer", vectorizer),
-            ("classifier", classifier),
+            ("vectoriseur", vectoriseur),
+            ("classifieur", classifieur),
         ])
-        self._pipeline.fit(texts_train, labels_train)
+        self._pipeline.fit(textes_train, labels_train)
         self._classes = list(self._pipeline.classes_)
 
-    def predict(self, texts: list[str]) -> list[str]:
-        if self._pipeline is None:
-            raise RuntimeError("Model is not fitted. Call fit() first.")
-        return list(self._pipeline.predict(texts))
+    def predire(self, textes: list[str]) -> list[str]:
+        """Prédit les classes pour une liste de textes.
 
-    def predict_proba(self, texts: list[str]) -> np.ndarray:
-        if self._pipeline is None:
-            raise RuntimeError("Model is not fitted. Call fit() first.")
-        return self._pipeline.predict_proba(texts)
+        Args:
+            textes: Textes à classifier.
 
-    def get_classes(self) -> list[str]:
+        Retours:
+            Liste des labels prédits.
+
+        Raises:
+            RuntimeError: Si le modèle n'a pas encore été entraîné.
+        """
+        if self._pipeline is None:
+            raise RuntimeError("Le modèle n'est pas entraîné. Appelez entrainer() d'abord.")
+        return list(self._pipeline.predict(textes))
+
+    def predire_probabilites(self, textes: list[str]) -> np.ndarray:
+        """Calcule les probabilités d'appartenance à chaque classe.
+
+        Args:
+            textes: Textes à classifier.
+
+        Retours:
+            Tableau numpy (n_échantillons, n_classes).
+
+        Raises:
+            RuntimeError: Si le modèle n'a pas encore été entraîné.
+        """
+        if self._pipeline is None:
+            raise RuntimeError("Le modèle n'est pas entraîné. Appelez entrainer() d'abord.")
+        return self._pipeline.predict_proba(textes)
+
+    def obtenir_classes(self) -> list[str]:
+        """Retourne les classes dans l'ordre du pipeline.
+
+        Retours:
+            Liste de noms de classes.
+        """
         return self._classes
 
-    def save(self, directory: Path) -> None:
-        directory.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self._pipeline, directory / MODEL_FILE)
+    def sauvegarder(self, repertoire: Path) -> None:
+        """Sauvegarde le pipeline sklearn via joblib.
+
+        Args:
+            repertoire: Répertoire de destination.
+        """
+        repertoire.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self._pipeline, repertoire / FICHIER_MODELE)
 
     @classmethod
-    def load(cls, directory: Path) -> "ClassicalClassifier":
-        pipeline = joblib.load(directory / MODEL_FILE)
+    def charger(cls, repertoire: Path) -> "ClassifieurClassique":
+        """Charge un pipeline sklearn depuis un répertoire.
+
+        Args:
+            repertoire: Répertoire contenant le fichier pipeline.joblib.
+
+        Retours:
+            Instance de ClassifieurClassique restaurée.
+        """
+        pipeline = joblib.load(repertoire / FICHIER_MODELE)
         instance = cls.__new__(cls)
         instance._pipeline = pipeline
         instance._classes = list(pipeline.classes_)
-        instance._model_config = {}
-        instance._features_config = {}
+        instance._config_modele = {}
+        instance._config_features = {}
         return instance

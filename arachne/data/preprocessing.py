@@ -1,124 +1,171 @@
-"""Table preprocessing: matrix → text representation."""
+"""Prétraitement des tableaux : conversion matrice → représentation textuelle."""
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-
-LABELS = ["batiment", "vehicule", "sinistre", "autre"]
-LABEL_TO_ID: dict[str, int] = {label: i for i, label in enumerate(LABELS)}
-ID_TO_LABEL: dict[int, str] = {i: label for i, label in enumerate(LABELS)}
+from arachne.constants import LABELS
 
 
-def clean_cell(value) -> str:
-    """Normalize a table cell to a clean string."""
-    if value is None:
-        return ""
-    text = str(value).strip()
-    text = re.sub(r"\s+", " ", text)
-    return text
+class Preprocesseur:
+    """Convertit des matrices de tableaux en représentations textuelles.
 
-
-def table_to_text(
-    table: list[list],
-    header_rows: int = 1,
-    header_weight: int = 3,
-    max_content_cells: int = 200,
-    max_length: Optional[int] = None,
-) -> str:
-    """Convert a table matrix to a weighted text representation.
-
-    Headers are repeated `header_weight` times to increase their influence
-    during vectorization.
+    Les en-têtes sont répétés ``poids_entetes`` fois pour amplifier leur
+    influence lors de la vectorisation TF-IDF.
 
     Args:
-        table: 2D list of cell values.
-        header_rows: number of rows treated as headers.
-        header_weight: how many times to repeat header text.
-        max_content_cells: max number of content cells to include.
-        max_length: optional character limit for the output text.
+        lignes_entetes: Nombre de lignes traitées comme en-têtes.
+        poids_entetes: Nombre de répétitions des en-têtes dans le texte final.
+        max_cellules_contenu: Nombre maximum de cellules de contenu à inclure.
+        longueur_max: Limite optionnelle en nombre de caractères du texte final.
 
-    Returns:
-        Single string representing the table.
+    Exemple:
+        >>> prep = Preprocesseur(lignes_entetes=1, poids_entetes=3)
+        >>> texte = prep.transformer([["Col1", "Col2"], ["Val1", "Val2"]])
+        >>> textes = prep.transformer_lot(liste_de_tableaux)
     """
-    if not table:
-        return ""
 
-    header_rows = min(header_rows, len(table))
-    headers = table[:header_rows]
-    content = table[header_rows:]
+    def __init__(
+        self,
+        lignes_entetes: int = 1,
+        poids_entetes: int = 3,
+        max_cellules_contenu: int = 200,
+        longueur_max: int | None = None,
+    ) -> None:
+        self.lignes_entetes = lignes_entetes
+        self.poids_entetes = poids_entetes
+        self.max_cellules_contenu = max_cellules_contenu
+        self.longueur_max = longueur_max
 
-    header_cells = [
-        clean_cell(cell)
-        for row in headers
-        for cell in row
-        if clean_cell(cell)
-    ]
-    header_text = " | ".join(header_cells)
+    @classmethod
+    def depuis_config(cls, config_preprocessing: dict) -> "Preprocesseur":
+        """Crée un Preprocesseur à partir d'un dictionnaire de configuration YAML.
 
-    content_cells = [
-        clean_cell(cell)
-        for row in content
-        for cell in row
-        if clean_cell(cell)
-    ][:max_content_cells]
-    content_text = " | ".join(content_cells)
+        Args:
+            config_preprocessing: Section ``preprocessing`` du fichier YAML.
 
-    parts = [header_text] * header_weight
-    if content_text:
-        parts.append(content_text)
-
-    text = " ".join(p for p in parts if p)
-
-    if max_length:
-        text = text[:max_length]
-
-    return text
-
-
-def tables_to_texts(tables: list[list[list]], preprocessing_config: dict) -> list[str]:
-    """Convert a list of table matrices to text representations."""
-    return [
-        table_to_text(
-            table,
-            header_rows=preprocessing_config.get("header_rows", 1),
-            header_weight=preprocessing_config.get("header_weight", 3),
-            max_content_cells=preprocessing_config.get("max_content_cells", 200),
-            max_length=preprocessing_config.get("max_length", None),
+        Retours:
+            Instance configurée de Preprocesseur.
+        """
+        return cls(
+            lignes_entetes=config_preprocessing.get("header_rows", 1),
+            poids_entetes=config_preprocessing.get("header_weight", 3),
+            max_cellules_contenu=config_preprocessing.get("max_content_cells", 200),
+            longueur_max=config_preprocessing.get("max_length", None),
         )
-        for table in tables
-    ]
+
+    def transformer(self, tableau: list[list]) -> str:
+        """Convertit un tableau (matrice 2D) en représentation textuelle pondérée.
+
+        Args:
+            tableau: Matrice 2D de valeurs (list[list[str]]).
+
+        Retours:
+            Chaîne de texte représentant le tableau, avec les en-têtes pondérés.
+        """
+        if not tableau:
+            return ""
+
+        nb_lignes_entetes = min(self.lignes_entetes, len(tableau))
+        entetes = tableau[:nb_lignes_entetes]
+        contenu = tableau[nb_lignes_entetes:]
+
+        cellules_entetes = [
+            self._nettoyer_cellule(cellule)
+            for ligne in entetes
+            for cellule in ligne
+            if self._nettoyer_cellule(cellule)
+        ]
+        texte_entetes = " | ".join(cellules_entetes)
+
+        cellules_contenu = [
+            self._nettoyer_cellule(cellule)
+            for ligne in contenu
+            for cellule in ligne
+            if self._nettoyer_cellule(cellule)
+        ][:self.max_cellules_contenu]
+        texte_contenu = " | ".join(cellules_contenu)
+
+        parties = [texte_entetes] * self.poids_entetes
+        if texte_contenu:
+            parties.append(texte_contenu)
+
+        texte = " ".join(p for p in parties if p)
+
+        if self.longueur_max:
+            texte = texte[:self.longueur_max]
+
+        return texte
+
+    def transformer_lot(self, tableaux: list[list[list]]) -> list[str]:
+        """Convertit une liste de tableaux en représentations textuelles.
+
+        Args:
+            tableaux: Liste de matrices 2D.
+
+        Retours:
+            Liste de chaînes de texte, une par tableau.
+        """
+        return [self.transformer(tableau) for tableau in tableaux]
+
+    @staticmethod
+    def _nettoyer_cellule(valeur) -> str:
+        """Normalise une cellule en chaîne de caractères propre.
+
+        Args:
+            valeur: Valeur brute de la cellule (any).
+
+        Retours:
+            Chaîne nettoyée (espaces multiples supprimés, strip).
+        """
+        if valeur is None:
+            return ""
+        texte = str(valeur).strip()
+        return re.sub(r"\s+", " ", texte)
 
 
-def split_dataset(
+def decouper_dataset(
     df: pd.DataFrame,
-    test_size: float = 0.2,
-    val_size: float = 0.1,
-    stratify: bool = True,
-    random_seed: int = 42,
+    taille_test: float = 0.2,
+    taille_val: float = 0.1,
+    stratifier: bool = True,
+    graine: int = 42,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Split DataFrame into train, validation, and test sets."""
-    stratify_col = df["label"] if stratify else None
+    """Découpe un DataFrame en ensembles d'entraînement, validation et test.
+
+    Args:
+        df: DataFrame source avec une colonne ``label``.
+        taille_test: Proportion des données pour le test (ex: 0.2 = 20%).
+        taille_val: Proportion des données pour la validation (ex: 0.1 = 10%).
+        stratifier: Si True, maintient la distribution des classes dans chaque split.
+        graine: Graine aléatoire pour la reproductibilité.
+
+    Retours:
+        Tuple (df_train, df_val, df_test).
+    """
+    col_stratification = df["label"] if stratifier else None
 
     df_train_val, df_test = train_test_split(
         df,
-        test_size=test_size,
-        stratify=stratify_col,
-        random_state=random_seed,
+        test_size=taille_test,
+        stratify=col_stratification,
+        random_state=graine,
     )
 
-    # Val size relative to train_val
-    relative_val_size = val_size / (1.0 - test_size)
-    stratify_col_tv = df_train_val["label"] if stratify else None
+    taille_val_relative = taille_val / (1.0 - taille_test)
+    col_strat_tv = df_train_val["label"] if stratifier else None
 
     df_train, df_val = train_test_split(
         df_train_val,
-        test_size=relative_val_size,
-        stratify=stratify_col_tv,
-        random_state=random_seed,
+        test_size=taille_val_relative,
+        stratify=col_strat_tv,
+        random_state=graine,
     )
 
-    return df_train.reset_index(drop=True), df_val.reset_index(drop=True), df_test.reset_index(drop=True)
+    return (
+        df_train.reset_index(drop=True),
+        df_val.reset_index(drop=True),
+        df_test.reset_index(drop=True),
+    )

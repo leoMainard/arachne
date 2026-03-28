@@ -1,8 +1,8 @@
-"""Export labeled table data from PostgreSQL to a local parquet file.
+"""Export des données labellisées depuis PostgreSQL vers un fichier parquet local.
 
-Usage:
-    python scripts/export_data.py --output data/tables.parquet
-    python scripts/export_data.py --output data/tables.parquet --query "SELECT id, table_data, label FROM my_table"
+Utilisation :
+    python scripts/export_data.py --dbname ma_base --user mon_utilisateur --output data/tables.parquet
+    python scripts/export_data.py --dbname ma_base --user mon_utilisateur --requete "SELECT id, table_data, label FROM ma_table"
 """
 from __future__ import annotations
 
@@ -14,27 +14,38 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from rich.console import Console
 
-from arachne.data.loader import load_from_postgresql, export_to_parquet
+from arachne.data.loader import ChargeurDonnees
 
 console = Console()
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Export data from PostgreSQL to parquet.")
+def _analyser_arguments() -> argparse.Namespace:
+    """Analyse les arguments de la ligne de commande.
+
+    Retours:
+        Namespace avec les arguments parsés.
+    """
+    parser = argparse.ArgumentParser(
+        description="Exporte les données depuis PostgreSQL vers un fichier parquet."
+    )
     parser.add_argument("--output", "-o", type=Path, default=Path("data/tables.parquet"))
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", type=int, default=5432)
     parser.add_argument("--dbname", required=True)
     parser.add_argument("--user", required=True)
     parser.add_argument("--password", default="")
-    parser.add_argument("--query", default=None, help="Custom SQL query.")
+    parser.add_argument(
+        "--requete", default=None,
+        help="Requête SQL personnalisée (doit retourner les colonnes table_data et label)."
+    )
     return parser.parse_args()
 
 
 def main() -> None:
-    args = parse_args()
+    """Point d'entrée principal du script d'export."""
+    args = _analyser_arguments()
 
-    db_config = {
+    config_db = {
         "host": args.host,
         "port": args.port,
         "dbname": args.dbname,
@@ -42,18 +53,18 @@ def main() -> None:
         "password": args.password,
     }
 
-    console.print(f"Connecting to PostgreSQL ({args.host}:{args.port}/{args.dbname})...")
+    console.print(f"Connexion à PostgreSQL ({args.host}:{args.port}/{args.dbname})...")
     try:
-        df = load_from_postgresql(db_config, query=args.query)
-    except Exception as e:
-        console.print(f"[red]Failed to load from PostgreSQL: {e}[/red]")
+        df = ChargeurDonnees.depuis_postgresql(config_db, requete=args.requete)
+    except Exception as erreur:
+        console.print(f"[red]Erreur lors du chargement depuis PostgreSQL : {erreur}[/red]")
         sys.exit(1)
 
-    console.print(f"Loaded {len(df)} rows.")
-    console.print(f"Class distribution:\n{df['label'].value_counts().to_string()}")
+    console.print(f"{len(df)} lignes chargées.")
+    console.print(f"Distribution des classes :\n{df['label'].value_counts().to_string()}")
 
-    export_to_parquet(df, args.output)
-    console.print(f"[green]Saved to: {args.output}[/green]")
+    ChargeurDonnees.exporter_parquet(df, args.output)
+    console.print(f"[green]Fichier sauvegardé : {args.output}[/green]")
 
 
 if __name__ == "__main__":

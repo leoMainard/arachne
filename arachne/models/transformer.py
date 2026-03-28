@@ -1,175 +1,294 @@
-"""CamemBERT fine-tuning classifier (requires torch + transformers)."""
+"""Classifieur CamemBERT par fine-tuning (nécessite torch + transformers)."""
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from arachne.models.base import BaseTableClassifier
-from arachne.data.preprocessing import LABEL_TO_ID, ID_TO_LABEL, LABELS
+from arachne.constants import ID_VERS_LABEL, LABEL_VERS_ID, LABELS
+from arachne.models.base import ClassifieurBase
+
+if TYPE_CHECKING:
+    import torch
 
 
-class TransformerClassifier(BaseTableClassifier):
-    """Fine-tuned CamemBERT (or any HuggingFace sequence classification model)."""
+# ---------------------------------------------------------------------------
+# Jeu de données PyTorch — défini au niveau du module (pas dans une méthode)
+# ---------------------------------------------------------------------------
 
-    def __init__(self, model_config: dict, features_config: dict):
-        self._model_config = model_config
-        self._features_config = features_config
-        self._model = None
-        self._tokenizer = None
-        self._device = None
-        self._classes = LABELS.copy()
+def _creer_dataset(textes: list[str], labels: list[str], tokeniseur, longueur_max: int):
+    """Crée un Dataset PyTorch à partir de textes et de labels.
 
-    def _get_device(self) -> "torch.device":
-        import torch
-        device_str = self._model_config.get("params", {}).get("device", "auto")
-        if device_str == "auto":
-            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        return torch.device(device_str)
+    Args:
+        textes: Textes des tableaux.
+        labels: Labels correspondants.
+        tokeniseur: Tokeniseur HuggingFace.
+        longueur_max: Longueur maximale de tokenisation.
 
-    def fit(
+    Retours:
+        Instance de _DatasetTableaux.
+    """
+    return _DatasetTableaux(textes, labels, tokeniseur, longueur_max)
+
+
+class _DatasetTableaux:
+    """Dataset PyTorch pour les tableaux d'assurance.
+
+    Args:
+        textes: Textes des tableaux prétraités.
+        labels: Labels de classification.
+        tokeniseur: Tokeniseur HuggingFace (ex: CamemBERT).
+        longueur_max: Nombre maximal de tokens par séquence.
+    """
+
+    def __init__(
         self,
-        texts_train: list[str],
-        labels_train: list[str],
-        texts_val: Optional[list[str]] = None,
-        labels_val: Optional[list[str]] = None,
+        textes: list[str],
+        labels: list[str],
+        tokeniseur,
+        longueur_max: int,
     ) -> None:
+        # Import optionnel : torch n'est requis que pour les modèles transformer.
+        # L'import au niveau module ferait crasher tout le package pour les
+        # utilisateurs sans GPU/torch.
+        import torch
+
+        self._encodages = tokeniseur(
+            textes,
+            truncation=True,
+            padding=True,
+            max_length=longueur_max,
+            return_tensors="pt",
+        )
+        self._labels = torch.tensor(
+            [LABEL_VERS_ID.get(label, 3) for label in labels],
+            dtype=torch.long,
+        )
+
+    def __len__(self) -> int:
+        return len(self._labels)
+
+    def __getitem__(self, idx: int) -> dict:
+        return {
+            **{cle: valeur[idx] for cle, valeur in self._encodages.items()},
+            "labels": self._labels[idx],
+        }
+
+
+class ClassifieurTransformer(ClassifieurBase):
+    """Classifieur CamemBERT (ou tout modèle HuggingFace de classification).
+
+    Requiert l'installation de l'extra [transformers] :
+    ``pip install arachne[transformers]``
+
+    Args:
+        config_modele: Section ``model`` du fichier YAML.
+        config_features: Section ``features`` du fichier YAML.
+
+    Exemple:
+        >>> clf = ClassifieurTransformer(config_modele, config_features)
+        >>> clf.entrainer(textes_train, labels_train, textes_val, labels_val)
+        >>> predictions = clf.predire(textes_test)
+    """
+
+    def __init__(self, config_modele: dict, config_features: dict) -> None:
+        self._config_modele = config_modele
+        self._config_features = config_features
+        self._modele = None
+        self._tokeniseur = None
+        self._dispositif = None
+        self._classes: list[str] = LABELS.copy()
+
+    def _obtenir_dispositif(self) -> "torch.device":
+        """Détermine le dispositif de calcul (CPU ou GPU).
+
+        Retours:
+            torch.device approprié selon la configuration et la disponibilité.
+        """
+        import torch
+
+        dispositif_cfg = self._config_modele.get("params", {}).get("device", "auto")
+        if dispositif_cfg == "auto":
+            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return torch.device(dispositif_cfg)
+
+    def entrainer(
+        self,
+        textes_train: list[str],
+        labels_train: list[str],
+        textes_val: list[str] | None = None,
+        labels_val: list[str] | None = None,
+    ) -> None:
+        """Fine-tune le modèle CamemBERT sur les données d'entraînement.
+
+        Args:
+            textes_train: Textes d'entraînement.
+            labels_train: Labels d'entraînement.
+            textes_val: Textes de validation (non utilisés dans cette implémentation).
+            labels_val: Labels de validation (non utilisés dans cette implémentation).
+
+        Raises:
+            ImportError: Si torch ou transformers ne sont pas installés.
+        """
+        # Import optionnel : torch et transformers ne sont requis que pour ce modèle.
         try:
             import torch
-            from torch.utils.data import Dataset, DataLoader
-            from transformers import AutoTokenizer, AutoModelForSequenceClassification
             from torch.optim import AdamW
+            from torch.utils.data import DataLoader
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
             from transformers import get_linear_schedule_with_warmup
-        except ImportError as e:
+        except ImportError as erreur:
             raise ImportError(
-                "torch and transformers are required for transformer models. "
-                "Install with: pip install arachne[transformers]"
-            ) from e
+                "torch et transformers sont requis pour les modèles transformer. "
+                "Installez-les avec : pip install arachne[transformers]"
+            ) from erreur
 
-        params = self._model_config.get("params", {})
-        model_name = params.get("model_name", "camembert-base")
-        num_labels = params.get("num_labels", 4)
+        params = self._config_modele.get("params", {})
+        nom_modele = params.get("model_name", "camembert-base")
+        nb_classes = params.get("num_labels", 4)
         dropout = params.get("dropout", 0.1)
-        max_length = self._model_config.get("max_length", 512)
+        longueur_max = self._config_modele.get("max_length", 512)
 
-        training_cfg = self._model_config.get("training", {})
-        epochs = training_cfg.get("epochs", 5)
-        batch_size = training_cfg.get("batch_size", 16)
-        lr = training_cfg.get("learning_rate", 2e-5)
-        warmup_ratio = training_cfg.get("warmup_ratio", 0.1)
-        weight_decay = training_cfg.get("weight_decay", 0.01)
+        cfg_entrainement = self._config_modele.get("training", {})
+        nb_epochs = cfg_entrainement.get("epochs", 5)
+        taille_batch = cfg_entrainement.get("batch_size", 16)
+        taux_apprentissage = cfg_entrainement.get("learning_rate", 2e-5)
+        ratio_warmup = cfg_entrainement.get("warmup_ratio", 0.1)
+        decroissance_poids = cfg_entrainement.get("weight_decay", 0.01)
 
-        self._device = self._get_device()
+        self._dispositif = self._obtenir_dispositif()
 
-        self._tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self._model = AutoModelForSequenceClassification.from_pretrained(
-            model_name,
-            num_labels=num_labels,
+        self._tokeniseur = AutoTokenizer.from_pretrained(nom_modele)
+        self._modele = AutoModelForSequenceClassification.from_pretrained(
+            nom_modele,
+            num_labels=nb_classes,
             hidden_dropout_prob=dropout,
             attention_probs_dropout_prob=dropout,
         )
-        self._model.to(self._device)
+        self._modele.to(self._dispositif)
 
-        class TableDataset(Dataset):
-            def __init__(self, texts, labels, tokenizer, max_len):
-                self.encodings = tokenizer(
-                    texts,
-                    truncation=True,
-                    padding=True,
-                    max_length=max_len,
-                    return_tensors="pt",
-                )
-                self.labels = torch.tensor(
-                    [LABEL_TO_ID.get(l, 3) for l in labels], dtype=torch.long
-                )
+        dataset_train = _creer_dataset(textes_train, labels_train, self._tokeniseur, longueur_max)
+        chargeur_train = DataLoader(dataset_train, batch_size=taille_batch, shuffle=True)
 
-            def __len__(self):
-                return len(self.labels)
+        optimiseur = AdamW(
+            self._modele.parameters(),
+            lr=taux_apprentissage,
+            weight_decay=decroissance_poids,
+        )
+        nb_etapes_total = len(chargeur_train) * nb_epochs
+        nb_etapes_warmup = int(nb_etapes_total * ratio_warmup)
+        planificateur = get_linear_schedule_with_warmup(
+            optimiseur, nb_etapes_warmup, nb_etapes_total
+        )
 
-            def __getitem__(self, idx):
-                return {
-                    **{k: v[idx] for k, v in self.encodings.items()},
-                    "labels": self.labels[idx],
-                }
+        self._modele.train()
+        for epoch in range(nb_epochs):
+            perte_totale = 0.0
+            for batch in chargeur_train:
+                batch = {cle: val.to(self._dispositif) for cle, val in batch.items()}
+                optimiseur.zero_grad()
+                sorties = self._modele(**batch)
+                perte = sorties.loss
+                perte.backward()
+                torch.nn.utils.clip_grad_norm_(self._modele.parameters(), 1.0)
+                optimiseur.step()
+                planificateur.step()
+                perte_totale += perte.item()
+            perte_moy = perte_totale / len(chargeur_train)
+            print(f"Époque {epoch + 1}/{nb_epochs} — perte : {perte_moy:.4f}")
 
-        train_dataset = TableDataset(texts_train, labels_train, self._tokenizer, max_length)
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    def predire(self, textes: list[str]) -> list[str]:
+        """Prédit les classes pour une liste de textes.
 
-        optimizer = AdamW(self._model.parameters(), lr=lr, weight_decay=weight_decay)
-        total_steps = len(train_loader) * epochs
-        warmup_steps = int(total_steps * warmup_ratio)
-        scheduler = get_linear_schedule_with_warmup(optimizer, warmup_steps, total_steps)
+        Args:
+            textes: Textes à classifier.
 
-        self._model.train()
-        for epoch in range(epochs):
-            total_loss = 0.0
-            for batch in train_loader:
-                batch = {k: v.to(self._device) for k, v in batch.items()}
-                optimizer.zero_grad()
-                outputs = self._model(**batch)
-                loss = outputs.loss
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self._model.parameters(), 1.0)
-                optimizer.step()
-                scheduler.step()
-                total_loss += loss.item()
-            avg_loss = total_loss / len(train_loader)
-            print(f"Epoch {epoch + 1}/{epochs} — loss: {avg_loss:.4f}")
+        Retours:
+            Liste des labels prédits.
+        """
+        probabilites = self.predire_probabilites(textes)
+        indices = np.argmax(probabilites, axis=1)
+        return [ID_VERS_LABEL[i] for i in indices]
 
-    def predict(self, texts: list[str]) -> list[str]:
-        proba = self.predict_proba(texts)
-        indices = np.argmax(proba, axis=1)
-        return [ID_TO_LABEL[i] for i in indices]
+    def predire_probabilites(self, textes: list[str]) -> np.ndarray:
+        """Calcule les probabilités d'appartenance à chaque classe.
 
-    def predict_proba(self, texts: list[str]) -> np.ndarray:
+        Args:
+            textes: Textes à classifier.
+
+        Retours:
+            Tableau numpy (n_échantillons, n_classes).
+
+        Raises:
+            RuntimeError: Si le modèle n'est pas encore entraîné.
+        """
         import torch
-        if self._model is None or self._tokenizer is None:
-            raise RuntimeError("Model is not fitted. Call fit() first.")
 
-        self._model.eval()
-        all_probs = []
+        if self._modele is None or self._tokeniseur is None:
+            raise RuntimeError("Le modèle n'est pas entraîné. Appelez entrainer() d'abord.")
 
-        batch_size = 32
-        for i in range(0, len(texts), batch_size):
-            batch_texts = texts[i:i + batch_size]
-            encodings = self._tokenizer(
-                batch_texts,
+        self._modele.eval()
+        toutes_probabilites: list[np.ndarray] = []
+
+        taille_batch = 32
+        for i in range(0, len(textes), taille_batch):
+            batch_textes = textes[i:i + taille_batch]
+            encodages = self._tokeniseur(
+                batch_textes,
                 truncation=True,
                 padding=True,
                 max_length=512,
                 return_tensors="pt",
             )
-            encodings = {k: v.to(self._device) for k, v in encodings.items()}
+            encodages = {cle: val.to(self._dispositif) for cle, val in encodages.items()}
             with torch.no_grad():
-                outputs = self._model(**encodings)
-            probs = torch.softmax(outputs.logits, dim=-1).cpu().numpy()
-            all_probs.append(probs)
+                sorties = self._modele(**encodages)
+            probabilites = torch.softmax(sorties.logits, dim=-1).cpu().numpy()
+            toutes_probabilites.append(probabilites)
 
-        return np.vstack(all_probs)
+        return np.vstack(toutes_probabilites)
 
-    def get_classes(self) -> list[str]:
+    def obtenir_classes(self) -> list[str]:
+        """Retourne les classes connues du modèle.
+
+        Retours:
+            Liste des noms de classes.
+        """
         return self._classes
 
-    def save(self, directory: Path) -> None:
-        directory.mkdir(parents=True, exist_ok=True)
-        if self._model is not None:
-            self._model.save_pretrained(directory / "hf_model")
-        if self._tokenizer is not None:
-            self._tokenizer.save_pretrained(directory / "hf_model")
+    def sauvegarder(self, repertoire: Path) -> None:
+        """Sauvegarde le modèle HuggingFace dans un sous-répertoire hf_model.
+
+        Args:
+            repertoire: Répertoire de destination.
+        """
+        repertoire.mkdir(parents=True, exist_ok=True)
+        if self._modele is not None:
+            self._modele.save_pretrained(repertoire / "hf_model")
+        if self._tokeniseur is not None:
+            self._tokeniseur.save_pretrained(repertoire / "hf_model")
 
     @classmethod
-    def load(cls, directory: Path) -> "TransformerClassifier":
-        import torch
-        from transformers import AutoTokenizer, AutoModelForSequenceClassification
+    def charger(cls, repertoire: Path) -> "ClassifieurTransformer":
+        """Charge un modèle CamemBERT depuis un répertoire sauvegardé.
 
-        hf_path = directory / "hf_model"
+        Args:
+            repertoire: Répertoire contenant le sous-dossier hf_model.
+
+        Retours:
+            Instance de ClassifieurTransformer restaurée.
+        """
+        import torch
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+        chemin_hf = repertoire / "hf_model"
         instance = cls.__new__(cls)
         instance._classes = LABELS.copy()
-        instance._model_config = {}
-        instance._features_config = {}
-        instance._tokenizer = AutoTokenizer.from_pretrained(str(hf_path))
-        instance._model = AutoModelForSequenceClassification.from_pretrained(str(hf_path))
-        instance._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        instance._model.to(instance._device)
+        instance._config_modele = {}
+        instance._config_features = {}
+        instance._tokeniseur = AutoTokenizer.from_pretrained(str(chemin_hf))
+        instance._modele = AutoModelForSequenceClassification.from_pretrained(str(chemin_hf))
+        instance._dispositif = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        instance._modele.to(instance._dispositif)
         return instance

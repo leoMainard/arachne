@@ -1,4 +1,4 @@
-"""Data loading from PostgreSQL or local files."""
+"""Chargement des données depuis PostgreSQL ou des fichiers locaux."""
 from __future__ import annotations
 
 import json
@@ -6,104 +6,174 @@ from pathlib import Path
 
 import pandas as pd
 
+from arachne.constants import COLONNES_REQUISES, SourceDonnees
 
-REQUIRED_COLUMNS = {"table_data", "label"}
 
+def _verifier_colonnes(df: pd.DataFrame) -> pd.DataFrame:
+    """Vérifie que le DataFrame contient les colonnes obligatoires.
 
-def _ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Validate and normalize column names."""
-    missing = REQUIRED_COLUMNS - set(df.columns)
-    if missing:
+    Args:
+        df: DataFrame à valider.
+
+    Retours:
+        Le DataFrame inchangé si valide.
+
+    Raises:
+        ValueError: Si des colonnes obligatoires sont manquantes.
+    """
+    manquantes = COLONNES_REQUISES - set(df.columns)
+    if manquantes:
         raise ValueError(
-            f"Dataset is missing required columns: {missing}. "
-            f"Available columns: {list(df.columns)}"
+            f"Colonnes manquantes dans le jeu de données : {manquantes}. "
+            f"Colonnes disponibles : {list(df.columns)}"
         )
     return df
 
 
-def _parse_table_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure table_data column contains parsed list[list[str]] objects."""
-    def parse(value):
-        if isinstance(value, str):
-            return json.loads(value)
-        return value
-
-    df = df.copy()
-    df["table_data"] = df["table_data"].apply(parse)
-    return df
-
-
-def load_from_postgresql(db_config: dict, query: str | None = None) -> pd.DataFrame:
-    """Load data from PostgreSQL.
+def _parser_table_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Désérialise la colonne table_data si elle contient des chaînes JSON.
 
     Args:
-        db_config: dict with keys: host, port, dbname, user, password
-        query: optional custom SQL query (must return table_data, label columns)
+        df: DataFrame avec une colonne table_data.
+
+    Retours:
+        DataFrame avec table_data contenant des objets list[list[str]].
     """
-    try:
-        import psycopg2  # noqa: F401
-    except ImportError as e:
-        raise ImportError(
-            "psycopg2 is required for PostgreSQL. Install with: pip install psycopg2-binary"
-        ) from e
+    def parser(valeur) -> list[list]:
+        if isinstance(valeur, str):
+            return json.loads(valeur)
+        return valeur
 
-    if query is None:
-        query = "SELECT id, table_data, label FROM tables"
-
-    conn = psycopg2.connect(**db_config)
-    try:
-        df = pd.read_sql(query, conn)
-    finally:
-        conn.close()
-
-    df = _ensure_columns(df)
-    df = _parse_table_data(df)
+    df = df.copy()
+    df["table_data"] = df["table_data"].apply(parser)
     return df
 
 
-def load_from_local(path: str | Path) -> pd.DataFrame:
-    """Load data from a local parquet, CSV, or JSON file."""
-    path = Path(path)
-    if not path.exists():
-        raise FileNotFoundError(f"Data file not found: {path}")
+class ChargeurDonnees:
+    """Charge les données labellisées depuis PostgreSQL ou un fichier local.
 
-    suffix = path.suffix.lower()
-    if suffix == ".parquet":
-        df = pd.read_parquet(path)
-    elif suffix == ".csv":
-        df = pd.read_csv(path)
-    elif suffix == ".json":
-        df = pd.read_json(path)
-    elif suffix == ".jsonl":
-        df = pd.read_json(path, lines=True)
-    else:
-        raise ValueError(f"Unsupported file format: {suffix}. Use parquet, csv, or json.")
+    Args:
+        config: Dictionnaire de configuration (section ``data`` du YAML).
 
-    df = _ensure_columns(df)
-    df = _parse_table_data(df)
-    return df
+    Exemple:
+        >>> chargeur = ChargeurDonnees(config)
+        >>> df = chargeur.charger()
+    """
 
+    def __init__(self, config: dict) -> None:
+        self._config = config
 
-def load_data(config: dict) -> pd.DataFrame:
-    """Load data according to config."""
-    source = config["data"]["source"]
+    def charger(self) -> pd.DataFrame:
+        """Charge les données selon la source définie dans la configuration.
 
-    if source == "postgresql":
-        db_config = config["data"].get("postgresql", {})
-        query = config["data"].get("query", None)
-        return load_from_postgresql(db_config, query)
-    elif source == "local":
-        path = config["data"]["local_path"]
-        return load_from_local(path)
-    else:
-        raise ValueError(f"Unknown data source '{source}'. Use 'postgresql' or 'local'.")
+        Retours:
+            DataFrame avec colonnes ``table_data`` (list[list[str]]) et ``label`` (str).
 
+        Raises:
+            ValueError: Si la source de données est inconnue.
+        """
+        source = self._config["data"]["source"]
 
-def export_to_parquet(df: pd.DataFrame, output_path: str | Path) -> None:
-    """Save DataFrame to parquet for local caching."""
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    # Serialize table_data as JSON strings for parquet compatibility
-    df_save = df.copy()
-    df_save["table_data"] = df_save["table_data"].apply(json.dumps)
-    df_save.to_parquet(output_path, index=False)
+        if source == SourceDonnees.POSTGRESQL:
+            config_db = self._config["data"].get("postgresql", {})
+            requete = self._config["data"].get("query", None)
+            return self.depuis_postgresql(config_db, requete)
+        elif source == SourceDonnees.LOCAL:
+            chemin = self._config["data"]["local_path"]
+            return self.depuis_local(chemin)
+        else:
+            raise ValueError(
+                f"Source de données inconnue : '{source}'. "
+                f"Valeurs acceptées : {[s.value for s in SourceDonnees]}"
+            )
+
+    @staticmethod
+    def depuis_postgresql(config_db: dict, requete: str | None = None) -> pd.DataFrame:
+        """Charge les données depuis une base PostgreSQL.
+
+        Args:
+            config_db: Paramètres de connexion (host, port, dbname, user, password).
+            requete: Requête SQL personnalisée. Par défaut : ``SELECT id, table_data, label FROM tables``.
+
+        Retours:
+            DataFrame avec colonnes ``table_data`` et ``label``.
+
+        Raises:
+            ImportError: Si psycopg2 n'est pas installé.
+        """
+        # Import optionnel : psycopg2 n'est requis que pour la source PostgreSQL.
+        # Mettre cet import au niveau module ferait crasher le chargement si
+        # l'utilisateur n'a pas installé psycopg2-binary.
+        try:
+            import psycopg2
+        except ImportError as erreur:
+            raise ImportError(
+                "psycopg2 est requis pour PostgreSQL. "
+                "Installez-le avec : pip install psycopg2-binary"
+            ) from erreur
+
+        if requete is None:
+            requete = "SELECT id, table_data, label FROM tables"
+
+        connexion = psycopg2.connect(**config_db)
+        try:
+            df = pd.read_sql(requete, connexion)
+        finally:
+            connexion.close()
+
+        df = _verifier_colonnes(df)
+        df = _parser_table_data(df)
+        return df
+
+    @staticmethod
+    def depuis_local(chemin: str | Path) -> pd.DataFrame:
+        """Charge les données depuis un fichier local (parquet, CSV, JSON).
+
+        Args:
+            chemin: Chemin vers le fichier de données.
+
+        Retours:
+            DataFrame avec colonnes ``table_data`` et ``label``.
+
+        Raises:
+            FileNotFoundError: Si le fichier n'existe pas.
+            ValueError: Si le format de fichier n'est pas supporté.
+        """
+        chemin = Path(chemin)
+        if not chemin.exists():
+            raise FileNotFoundError(f"Fichier de données introuvable : {chemin}")
+
+        suffixe = chemin.suffix.lower()
+        if suffixe == ".parquet":
+            df = pd.read_parquet(chemin)
+        elif suffixe == ".csv":
+            df = pd.read_csv(chemin)
+        elif suffixe == ".json":
+            df = pd.read_json(chemin)
+        elif suffixe == ".jsonl":
+            df = pd.read_json(chemin, lines=True)
+        else:
+            raise ValueError(
+                f"Format non supporté : {suffixe}. "
+                "Formats acceptés : .parquet, .csv, .json, .jsonl"
+            )
+
+        df = _verifier_colonnes(df)
+        df = _parser_table_data(df)
+        return df
+
+    @staticmethod
+    def exporter_parquet(df: pd.DataFrame, chemin_sortie: str | Path) -> None:
+        """Sauvegarde le DataFrame en parquet pour un usage local ultérieur.
+
+        La colonne table_data est sérialisée en JSON pour la compatibilité parquet.
+
+        Args:
+            df: DataFrame à sauvegarder.
+            chemin_sortie: Chemin du fichier parquet de destination.
+        """
+        chemin_sortie = Path(chemin_sortie)
+        chemin_sortie.parent.mkdir(parents=True, exist_ok=True)
+        df_sauvegarde = df.copy()
+        df_sauvegarde["table_data"] = df_sauvegarde["table_data"].apply(json.dumps)
+        df_sauvegarde.to_parquet(chemin_sortie, index=False)

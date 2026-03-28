@@ -1,8 +1,8 @@
-"""CLI entry point for training experiments.
+"""Point d'entrée CLI pour l'entraînement des expériences.
 
-Usage:
+Utilisation :
     python scripts/train.py --config configs/experiments/tfidf_logistic.yaml
-    python scripts/train.py --config configs/experiments/tfidf_logistic.yaml --data-source local
+    python scripts/train.py --config configs/experiments/camembert.yaml --source-donnees local
 """
 from __future__ import annotations
 
@@ -10,66 +10,70 @@ import argparse
 import sys
 from pathlib import Path
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from rich.console import Console
 
 from arachne.config import load_config
-from arachne.training.trainer import run_experiment
+from arachne.training.trainer import executer_experience
 
 console = Console()
 
 
-def parse_args() -> argparse.Namespace:
+def _analyser_arguments() -> argparse.Namespace:
+    """Analyse les arguments de la ligne de commande.
+
+    Retours:
+        Namespace avec les arguments parsés.
+    """
     parser = argparse.ArgumentParser(
-        description="Train a table classification model.",
+        description="Entraîne un modèle de classification de tableaux.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
+Exemples :
   python scripts/train.py --config configs/experiments/tfidf_logistic.yaml
-  python scripts/train.py --config configs/experiments/camembert.yaml --data-source local
+  python scripts/train.py --config configs/experiments/camembert.yaml --source-donnees local
         """,
     )
     parser.add_argument(
         "--config", "-c",
         type=Path,
         required=True,
-        help="Path to experiment YAML config file.",
+        help="Chemin vers le fichier YAML de configuration de l'expérience.",
     )
     parser.add_argument(
-        "--data-source",
+        "--source-donnees",
         choices=["postgresql", "local"],
-        help="Override the data source from config.",
+        help="Surcharge la source de données définie dans la configuration.",
     )
     parser.add_argument(
-        "--no-save",
+        "--sans-sauvegarde",
         action="store_true",
-        help="Do not save the model (only metrics and plots).",
+        help="Ne sauvegarde pas le modèle (métriques et graphiques uniquement).",
     )
     return parser.parse_args()
 
 
 def main() -> None:
-    args = parse_args()
+    """Point d'entrée principal du script d'entraînement."""
+    args = _analyser_arguments()
 
     if not args.config.exists():
-        console.print(f"[red]Config file not found: {args.config}[/red]")
+        console.print(f"[red]Fichier de configuration introuvable : {args.config}[/red]")
         sys.exit(1)
 
     config = load_config(args.config)
 
-    # CLI overrides
-    if args.data_source:
-        config["data"]["source"] = args.data_source
-    if args.no_save:
+    if args.source_donnees:
+        config["data"]["source"] = args.source_donnees
+    if args.sans_sauvegarde:
         config.setdefault("tracking", {})["save_model"] = False
 
     try:
-        summary = run_experiment(config)
-        acc = summary.get("test_metrics", {}).get("accuracy", "N/A")
-        console.print(f"\n[bold]Test accuracy: {acc}[/bold]")
-    except Exception as e:
+        resume = executer_experience(config)
+        accuracy = resume.get("test_metrics", {}).get("accuracy", "N/A")
+        console.print(f"\n[bold]Accuracy test : {accuracy}[/bold]")
+    except Exception:
         console.print_exception()
         sys.exit(1)
 
