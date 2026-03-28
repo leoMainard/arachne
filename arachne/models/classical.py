@@ -19,6 +19,11 @@ from arachne.models.base import ClassifieurBase
 FICHIER_MODELE = "pipeline.joblib"
 
 
+def _sparse_vers_dense(X):
+    """Convertit une matrice creuse en tableau dense. Picklable par joblib."""
+    return X.toarray() if hasattr(X, "toarray") else X
+
+
 def _construire_classifieur_sklearn(config_modele: dict):
     """Instancie le classifieur sklearn correspondant à la configuration.
 
@@ -44,7 +49,13 @@ def _construire_classifieur_sklearn(config_modele: dict):
     elif type_modele == TypeModele.FORET_ALEATOIRE:
         return RandomForestClassifier(**params)
     elif type_modele == TypeModele.GRADIENT_BOOSTING:
-        return HistGradientBoostingClassifier(**params)
+        # HistGradientBoostingClassifier ne supporte pas les matrices creuses (sparse)
+        # produites par TF-IDF. On encapsule dans un sous-pipeline avec conversion dense.
+        from sklearn.preprocessing import FunctionTransformer
+        return Pipeline([
+            ("to_dense", FunctionTransformer(_sparse_vers_dense, accept_sparse=True)),
+            ("gbm", HistGradientBoostingClassifier(**params)),
+        ])
     else:
         types_disponibles = [t.value for t in TypeModele if t != TypeModele.CAMEMBERT]
         raise ValueError(

@@ -1,5 +1,7 @@
 # Arachne
 
+![Arachne](arachne.png)
+
 Table classification system for insurance tender documents.
 
 Classifies table matrices (`list[list[str]]`) into 4 categories:
