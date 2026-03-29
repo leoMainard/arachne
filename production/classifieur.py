@@ -12,32 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import yaml
 
-
-def _detecter_type_modele(repertoire_experience: Path) -> str:
-    """Détecte le type de modèle depuis la configuration de l'expérience.
-
-    Args:
-        repertoire_experience: Chemin du répertoire d'expérience Arachne.
-
-    Retours:
-        ``"classique"`` ou ``"transformer"``.
-
-    Raises:
-        FileNotFoundError: Si config.yaml est absent.
-    """
-    chemin_config = repertoire_experience / "config.yaml"
-    if not chemin_config.exists():
-        raise FileNotFoundError(f"config.yaml introuvable dans {repertoire_experience}.")
-
-    with open(chemin_config, encoding="utf-8") as f:
-        config_experience = yaml.safe_load(f) or {}
-
-    type_features = config_experience.get("features", {}).get("type", "tfidf")
-    if type_features == "transformer_tokenizer":
-        return "transformer"
-    return "classique"
+from production._utils import charger_config_experience
 
 
 class ClassifieurProduction:
@@ -72,14 +48,19 @@ class ClassifieurProduction:
                 "Vérifiez que save_model: true était activé lors de l'entraînement."
             )
 
-        type_modele = _detecter_type_modele(repertoire)
+        config_experience = charger_config_experience(repertoire)
+        type_features = config_experience.get("features", {}).get("type", "tfidf")
 
-        if type_modele == "classique":
-            self._pipeline = self._charger_classique(repertoire_modele)
-            self._type = "classique"
-        else:
+        if type_features == "transformer_tokenizer":
             self._pipeline = self._charger_transformer(repertoire_modele)
             self._type = "transformer"
+            # Labels lus depuis la config sauvegardée — aucune dépendance envers arachne
+            self._classes_transformer: list[str] = config_experience.get("data", {}).get(
+                "labels", ["batiment", "vehicule", "sinistre", "autre"]
+            )
+        else:
+            self._pipeline = self._charger_classique(repertoire_modele)
+            self._type = "classique"
 
     @staticmethod
     def _charger_classique(repertoire_modele: Path):
@@ -105,8 +86,9 @@ class ClassifieurProduction:
             repertoire_modele: Dossier contenant le sous-dossier hf_model/.
 
         Retours:
-            Tuple (model, tokenizer, device).
+            Tuple (modele, tokeniseur, dispositif).
         """
+        # Import optionnel : torch et transformers ne sont requis que pour ce type de modèle.
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
@@ -151,9 +133,7 @@ class ClassifieurProduction:
         """
         if self._type == "classique":
             return list(self._pipeline.classes_)
-        # Pour les transformers, les classes sont dans l'ordre de LABELS
-        from arachne.constants import LABELS  # noqa: PLC0415
-        return LABELS
+        return self._classes_transformer
 
     def _predire_transformer(self, textes: list[str]) -> list[str]:
         """Inférence pour les modèles HuggingFace."""

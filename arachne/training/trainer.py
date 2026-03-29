@@ -8,14 +8,12 @@ import numpy as np
 from rich.console import Console
 from rich.table import Table
 from sklearn.model_selection import StratifiedKFold, cross_val_score
-from sklearn.pipeline import Pipeline
 
 from arachne.constants import LABELS
 from arachne.data.loader import ChargeurDonnees
 from arachne.data.preprocessing import Preprocesseur, decouper_dataset
-from arachne.features.extractors import obtenir_extracteur
 from arachne.models import obtenir_modele
-from arachne.models.classical import ClassifieurClassique, _construire_classifieur_sklearn
+from arachne.models.classical import ClassifieurClassique
 from arachne.tracking.tracker import SuiveurExperience
 from arachne.training.evaluator import (
     calculer_metriques,
@@ -104,10 +102,9 @@ def executer_experience(config: dict) -> dict:
         textes_tv = textes_train + textes_val
         labels_tv = labels_train + labels_val
 
-        pipeline_cv = Pipeline([
-            ("vectoriseur", obtenir_extracteur(config.get("features", {}))),
-            ("classifieur", _construire_classifieur_sklearn(config.get("model", {}))),
-        ])
+        pipeline_cv = ClassifieurClassique.construire_pipeline(
+            config.get("model", {}), config.get("features", {})
+        )
         skf = StratifiedKFold(
             n_splits=nb_folds,
             shuffle=True,

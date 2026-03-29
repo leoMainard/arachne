@@ -83,6 +83,25 @@ class ClassifieurClassique(ClassifieurBase):
         self._pipeline: Pipeline | None = None
         self._classes: list[str] = []
 
+    @classmethod
+    def construire_pipeline(cls, config_modele: dict, config_features: dict) -> Pipeline:
+        """Construit un pipeline sklearn non entraîné.
+
+        Utilisé notamment pour la validation croisée dans le trainer,
+        afin d'éviter de dépendre de fonctions privées depuis l'extérieur.
+
+        Args:
+            config_modele: Section ``model`` du fichier YAML.
+            config_features: Section ``features`` du fichier YAML.
+
+        Retours:
+            Pipeline sklearn (vectoriseur + classifieur), non entraîné.
+        """
+        return Pipeline([
+            ("vectoriseur", obtenir_extracteur(config_features)),
+            ("classifieur", _construire_classifieur_sklearn(config_modele)),
+        ])
+
     def entrainer(
         self,
         textes_train: list[str],

@@ -1,4 +1,4 @@
-"""Configuration loading and merging."""
+"""Chargement et fusion des configurations d'expériences."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,7 +7,7 @@ import yaml
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
-    """Deep merge two dicts; override values take precedence."""
+    """Fusionne deux dicts en profondeur ; les valeurs de override ont priorité."""
     result = base.copy()
     for key, value in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
@@ -17,11 +17,17 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-def load_config(config_path: str | Path) -> dict:
-    """Load experiment config merged with base defaults."""
+def charger_config(config_path: str | Path) -> dict:
+    """Charge la configuration d'une expérience fusionnée avec les valeurs par défaut.
+
+    Args:
+        config_path: Chemin vers le fichier YAML de l'expérience.
+
+    Retours:
+        Dictionnaire de configuration fusionné (base.yaml + expérience).
+    """
     config_path = Path(config_path)
 
-    # Resolve base.yaml relative to project root (2 levels up from configs/experiments/)
     if config_path.parent.name == "experiments":
         base_path = config_path.parent.parent / "base.yaml"
     else:

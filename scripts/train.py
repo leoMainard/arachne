@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from rich.console import Console
 
-from arachne.config import load_config
+from arachne.config import charger_config
 from arachne.training.trainer import executer_experience
 
 console = Console()
@@ -62,7 +62,7 @@ def main() -> None:
         console.print(f"[red]Fichier de configuration introuvable : {args.config}[/red]")
         sys.exit(1)
 
-    config = load_config(args.config)
+    config = charger_config(args.config)
 
     if args.source_donnees:
         config["data"]["source"] = args.source_donnees
