@@ -6,7 +6,7 @@ import re
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from arachne.constants import LABELS
+from arachne.constants import LABELS, SEPARATEUR_CONTENU
 
 
 class Preprocesseur:
@@ -33,11 +33,13 @@ class Preprocesseur:
         poids_entetes: int = 3,
         max_cellules_contenu: int = 200,
         longueur_max: int | None = None,
+        format_sortie: str = "standard",
     ) -> None:
         self.lignes_entetes = lignes_entetes
         self.poids_entetes = poids_entetes
         self.max_cellules_contenu = max_cellules_contenu
         self.longueur_max = longueur_max
+        self._format_sortie = format_sortie
 
     @classmethod
     def depuis_config(cls, config_preprocessing: dict) -> "Preprocesseur":
@@ -54,16 +56,22 @@ class Preprocesseur:
             poids_entetes=config_preprocessing.get("header_weight", 3),
             max_cellules_contenu=config_preprocessing.get("max_content_cells", 200),
             longueur_max=config_preprocessing.get("max_length", None),
+            format_sortie=config_preprocessing.get("format_sortie", "standard"),
         )
 
     def transformer(self, tableau: list[list]) -> str:
-        """Convertit un tableau (matrice 2D) en représentation textuelle pondérée.
+        """Convertit un tableau (matrice 2D) en représentation textuelle.
+
+        Le format de sortie dépend de ``self._format_sortie`` :
+        - ``"standard"`` : en-têtes répétés + contenu (comportement original).
+        - ``"entetes_seuls"`` : uniquement les cellules d'en-tête, sans contenu ni répétition.
+        - ``"separe"`` : ``"{entetes} __CONTENU__ {contenu}"`` pour le double TF-IDF.
 
         Args:
             tableau: Matrice 2D de valeurs (list[list[str]]).
 
         Retours:
-            Chaîne de texte représentant le tableau, avec les en-têtes pondérés.
+            Chaîne de texte représentant le tableau.
         """
         if not tableau:
             return ""
@@ -80,6 +88,12 @@ class Preprocesseur:
         ]
         texte_entetes = " | ".join(cellules_entetes)
 
+        if self._format_sortie == "entetes_seuls":
+            texte = texte_entetes
+            if self.longueur_max:
+                texte = texte[:self.longueur_max]
+            return texte
+
         cellules_contenu = [
             self._nettoyer_cellule(cellule)
             for ligne in contenu
@@ -88,6 +102,13 @@ class Preprocesseur:
         ][:self.max_cellules_contenu]
         texte_contenu = " | ".join(cellules_contenu)
 
+        if self._format_sortie == "separe":
+            texte = f"{texte_entetes} {SEPARATEUR_CONTENU} {texte_contenu}"
+            if self.longueur_max:
+                texte = texte[:self.longueur_max]
+            return texte
+
+        # "standard" : comportement original
         parties = [texte_entetes] * self.poids_entetes
         if texte_contenu:
             parties.append(texte_contenu)

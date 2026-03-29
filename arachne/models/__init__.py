@@ -23,11 +23,16 @@ def obtenir_modele(config_modele: dict, config_features: dict) -> ClassifieurBas
     """
     type_features = config_features.get("type", TypeFeatures.TFIDF)
 
-    if type_features in (TypeFeatures.TFIDF, "tfidf"):
-        return ClassifieurClassique(config_modele, config_features)
-    elif type_features in (TypeFeatures.TOKENIZER_TRANSFORMER, "transformer_tokenizer"):
+    if type_features in (TypeFeatures.TOKENIZER_TRANSFORMER, "transformer_tokenizer"):
         from arachne.models.transformer import ClassifieurTransformer
         return ClassifieurTransformer(config_modele, config_features)
+    elif type_features in (
+        TypeFeatures.TFIDF, "tfidf",
+        TypeFeatures.TFIDF_SEPARE, "tfidf_separe",
+        TypeFeatures.FEATURES_EXPLICITES, "features_explicites",
+        TypeFeatures.TFIDF_LEMMATISE, "tfidf_lemmatise",
+    ):
+        return ClassifieurClassique(config_modele, config_features)
     else:
         raise ValueError(
             f"Type de features inconnu : '{type_features}'. "

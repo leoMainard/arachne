@@ -133,9 +133,21 @@ def executer_experience(config: dict) -> dict:
             )
 
     # 6. Entraînement final
-    console.print("\n[bold]5. Entraînement du modèle final...[/bold]")
+    entrainer_sur_tv = (
+        config_entrainement.get("entrainer_sur_train_val", False)
+        and isinstance(modele, ClassifieurClassique)
+    )
+    if entrainer_sur_tv:
+        textes_final = textes_train + textes_val
+        labels_final = labels_train + labels_val
+        console.print("\n[bold]5. Entraînement sur train + val...[/bold]")
+    else:
+        textes_final = textes_train
+        labels_final = labels_train
+        console.print("\n[bold]5. Entraînement du modèle final...[/bold]")
+
     t0 = time.time()
-    modele.entrainer(textes_train, labels_train, textes_val, labels_val)
+    modele.entrainer(textes_final, labels_final, textes_val, labels_val)
     duree = time.time() - t0
     console.print(f"   Entraînement terminé en {duree:.1f}s")
 

@@ -20,6 +20,7 @@ preprocessing:
 training:
   cv_folds: 5
   scoring: "accuracy"
+  entrainer_sur_train_val: false
 
 tracking:
   save_model: true

@@ -1,0 +1,11 @@
+experiment:
+  name: "ensemble_vote"
+  description: "Vote majoritaire (soft) entre LR + LinearSVC + RandomForest"
+
+model:
+  type: "ensemble_vote"
+  params:
+    vote: "soft"
+
+training:
+  cv_folds: 3   # CV plus courte car 3x plus lent à entraîner

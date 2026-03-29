@@ -25,13 +25,22 @@ class TypeModele(str, Enum):
     FORET_ALEATOIRE = "random_forest"
     GRADIENT_BOOSTING = "gradient_boosting"
     CAMEMBERT = "camembert"
+    COMPLEMENT_NB = "complement_nb"
+    LIGHTGBM = "lightgbm"
+    XGBOOST = "xgboost"
+    ENSEMBLE_VOTE = "ensemble_vote"
 
 
 class TypeFeatures(str, Enum):
     """Stratégies d'extraction de features disponibles."""
     TFIDF = "tfidf"
     TOKENIZER_TRANSFORMER = "transformer_tokenizer"
+    TFIDF_SEPARE = "tfidf_separe"
+    FEATURES_EXPLICITES = "features_explicites"
+    TFIDF_LEMMATISE = "tfidf_lemmatise"
 
+
+SEPARATEUR_CONTENU = "__CONTENU__"
 
 # Listes dérivées des enums, utiles pour sklearn et les métriques
 LABELS: list[str] = [label.value for label in Label]

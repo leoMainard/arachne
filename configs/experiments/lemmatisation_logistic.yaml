@@ -1,0 +1,20 @@
+experiment:
+  name: "lemmatisation_logistic"
+  description: "Lemmatisation spaCy (fr_core_news_sm) + TF-IDF + LR"
+
+features:
+  type: "tfidf_lemmatise"
+  modele_spacy: "fr_core_news_sm"
+  params:
+    max_features: 15000
+    ngram_range: [1, 2]
+    sublinear_tf: true
+    min_df: 2
+
+model:
+  type: "logistic_regression"
+  params:
+    C: 1.0
+    max_iter: 1000
+    class_weight: "balanced"
+    solver: "lbfgs"

@@ -1,0 +1,21 @@
+experiment:
+  name: "lightgbm"
+  description: "TF-IDF + LightGBM (rapide, gère le sparse nativement)"
+
+features:
+  type: "tfidf"
+  params:
+    max_features: 10000
+    ngram_range: [1, 2]
+    sublinear_tf: true
+    min_df: 2
+
+model:
+  type: "lightgbm"
+  params:
+    n_estimators: 300
+    learning_rate: 0.1
+    num_leaves: 63
+    class_weight: "balanced"
+    random_state: 42
+    n_jobs: -1
