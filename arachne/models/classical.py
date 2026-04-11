@@ -3,9 +3,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from io import BytesIO
+from typing import TYPE_CHECKING
+
 import joblib
 import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin
+
+if TYPE_CHECKING:
+    from arachne.data.s3 import ConnecteurS3
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -255,14 +261,31 @@ class ClassifieurClassique(ClassifieurBase):
         """
         return self._classes
 
-    def sauvegarder(self, repertoire: Path) -> None:
-        """Sauvegarde le pipeline sklearn via joblib.
+    def sauvegarder(
+        self,
+        repertoire: Path | None,
+        connecteur_s3: "ConnecteurS3 | None" = None,
+        prefixe_s3: str = "",
+    ) -> None:
+        """Sauvegarde le pipeline sklearn via joblib (local et/ou S3).
 
         Args:
-            repertoire: Répertoire de destination.
+            repertoire: Répertoire local de destination.
+                        Passer ``None`` pour ne pas écrire sur le disque.
+            connecteur_s3: Si fourni, upload le pipeline vers S3 via ``envoyer_objet``
+                           (sérialisation en mémoire, pas d'écriture disque intermédiaire).
+            prefixe_s3: Préfixe de la clé S3, ex : ``"arachne/exp_123/model"``.
         """
-        repertoire.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self._pipeline, repertoire / FICHIER_MODELE)
+        if repertoire is not None:
+            repertoire.mkdir(parents=True, exist_ok=True)
+            joblib.dump(self._pipeline, repertoire / FICHIER_MODELE)
+
+        if connecteur_s3 is not None:
+            buf = BytesIO()
+            joblib.dump(self._pipeline, buf)
+            buf.seek(0)
+            cle = f"{prefixe_s3.rstrip('/')}/{FICHIER_MODELE}"
+            connecteur_s3.envoyer_objet(buf.read(), cle)
 
     @classmethod
     def charger(cls, repertoire: Path) -> "ClassifieurClassique":

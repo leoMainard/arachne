@@ -25,3 +25,14 @@ training:
 tracking:
   save_model: true
   output_dir: "models"
+
+stockage:
+  local: true          # conserver les artefacts sur le disque local
+  s3:
+    actif: false       # activer l'upload vers S3
+    access_key: ""
+    secret_key: ""
+    host: ""           # ex : "https://s3.eu-west-3.amazonaws.com" ou endpoint MinIO
+    bucket_name: ""
+    region: "eu-west-3"
+    prefixe: "arachne/experiences/"  # préfixe commun à toutes les expériences

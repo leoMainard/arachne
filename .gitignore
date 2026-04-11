@@ -5,8 +5,9 @@ build/
 dist/
 wheels/
 *.egg-info
-data/
-models/
+# Données et modèles générés (dossiers racine uniquement, pas le code source)
+/data/
+/models/
 .claude/
 
 # Virtual environments
