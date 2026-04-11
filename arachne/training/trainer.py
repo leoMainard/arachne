@@ -12,6 +12,7 @@ from sklearn.model_selection import StratifiedKFold, cross_val_score
 from arachne.constants import LABELS
 from arachne.data.loader import ChargeurDonnees
 from arachne.data.preprocessing import Preprocesseur, decouper_dataset
+from arachne.data.s3 import ConnecteurS3
 from arachne.models import obtenir_modele
 from arachne.models.classical import ClassifieurClassique
 from arachne.tracking.tracker import SuiveurExperience
@@ -41,10 +42,19 @@ def executer_experience(config: dict) -> dict:
     config_donnees = config["data"]
     config_preprocessing = config.get("preprocessing", {})
     config_entrainement = config.get("training", {})
+    config_stockage = config.get("stockage", {})
+
+    # --- Stockage : local et/ou S3 ---
+    local = config_stockage.get("local", True)
+    connecteur_s3 = ConnecteurS3.depuis_config(config_stockage)
+    prefixe_s3_base = config_stockage.get("s3", {}).get("prefixe", "arachne/experiences/")
 
     suiveur = SuiveurExperience(
         nom_experience=nom_exp,
         repertoire_sortie=Path(config.get("tracking", {}).get("output_dir", "models")),
+        local=local,
+        connecteur_s3=connecteur_s3,
+        prefixe_s3=prefixe_s3_base,
     )
     suiveur.enregistrer_config(config)
 
@@ -165,23 +175,35 @@ def executer_experience(config: dict) -> dict:
     suiveur.enregistrer_duree(duree)
 
     # 8. Génération des graphiques
-    repertoire_plots = suiveur.repertoire_experience / "plots"
+    repertoire_plots = suiveur.repertoire_experience / "plots" if local else None
+    prefixe_plots = f"{suiveur._prefixe_s3}/plots"
     sauvegarder_matrice_confusion(
         labels_test, y_predit, classes,
-        chemin_sortie=repertoire_plots / "matrice_confusion.png",
+        chemin_sortie=repertoire_plots / "matrice_confusion.png" if repertoire_plots else None,
         titre=nom_exp,
+        connecteur_s3=connecteur_s3,
+        cle_s3=f"{prefixe_plots}/matrice_confusion.png",
     )
     sauvegarder_graphique_metriques(
         metriques_test,
-        chemin_sortie=repertoire_plots / "metriques_par_classe.png",
+        chemin_sortie=repertoire_plots / "metriques_par_classe.png" if repertoire_plots else None,
         titre=f"{nom_exp} — Métriques par classe",
+        connecteur_s3=connecteur_s3,
+        cle_s3=f"{prefixe_plots}/metriques_par_classe.png",
     )
 
     # 9. Sauvegarde du modèle
     if config.get("tracking", {}).get("save_model", True):
         console.print("\n[bold]7. Sauvegarde du modèle...[/bold]")
-        modele.sauvegarder(suiveur.repertoire_experience / "model")
-        console.print(f"   Sauvegardé dans : {suiveur.repertoire_experience}")
+        repertoire_modele = suiveur.repertoire_experience / "model" if local else None
+        prefixe_modele = f"{suiveur._prefixe_s3}/model"
+        modele.sauvegarder(
+            repertoire_modele,
+            connecteur_s3=connecteur_s3,
+            prefixe_s3=prefixe_modele,
+        )
+        destination = f"s3://{prefixe_modele}" if connecteur_s3 and not local else str(suiveur.repertoire_experience)
+        console.print(f"   Sauvegardé dans : {destination}")
 
     suiveur.finaliser()
     console.print(

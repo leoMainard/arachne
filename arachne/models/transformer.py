@@ -1,6 +1,7 @@
 """Classifieur CamemBERT par fine-tuning (nécessite torch + transformers)."""
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -11,6 +12,7 @@ from arachne.models.base import ClassifieurBase
 
 if TYPE_CHECKING:
     import torch
+    from arachne.data.s3 import ConnecteurS3
 
 
 # ---------------------------------------------------------------------------
@@ -257,17 +259,48 @@ class ClassifieurTransformer(ClassifieurBase):
         """
         return self._classes
 
-    def sauvegarder(self, repertoire: Path) -> None:
-        """Sauvegarde le modèle HuggingFace dans un sous-répertoire hf_model.
+    def sauvegarder(
+        self,
+        repertoire: Path | None,
+        connecteur_s3: "ConnecteurS3 | None" = None,
+        prefixe_s3: str = "",
+    ) -> None:
+        """Sauvegarde le modèle HuggingFace (local et/ou S3).
+
+        ``save_pretrained`` exige un chemin disque : quand ``repertoire`` est None
+        et S3 est actif, un répertoire temporaire est utilisé puis supprimé
+        automatiquement après l'upload.
 
         Args:
-            repertoire: Répertoire de destination.
+            repertoire: Répertoire local de destination.
+                        Passer ``None`` pour ne pas conserver les fichiers sur le disque.
+            connecteur_s3: Si fourni, upload le répertoire ``hf_model/`` vers S3
+                           via ``envoyer_repertoire``.
+            prefixe_s3: Préfixe de la clé S3, ex : ``"arachne/exp_123/model"``.
         """
-        repertoire.mkdir(parents=True, exist_ok=True)
-        if self._modele is not None:
-            self._modele.save_pretrained(repertoire / "hf_model")
-        if self._tokeniseur is not None:
-            self._tokeniseur.save_pretrained(repertoire / "hf_model")
+        cible_hf = repertoire / "hf_model" if repertoire is not None else None
+
+        if cible_hf is not None:
+            cible_hf.mkdir(parents=True, exist_ok=True)
+            if self._modele is not None:
+                self._modele.save_pretrained(cible_hf)
+            if self._tokeniseur is not None:
+                self._tokeniseur.save_pretrained(cible_hf)
+
+        if connecteur_s3 is not None:
+            prefixe_hf = f"{prefixe_s3.rstrip('/')}/hf_model"
+            if cible_hf is not None:
+                # Déjà sauvegardé localement : upload direct.
+                connecteur_s3.envoyer_repertoire(cible_hf, prefixe_hf)
+            else:
+                # Pas de sauvegarde locale : répertoire temporaire auto-nettoyé.
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    chemin_tmp = Path(tmp_dir) / "hf_model"
+                    if self._modele is not None:
+                        self._modele.save_pretrained(chemin_tmp)
+                    if self._tokeniseur is not None:
+                        self._tokeniseur.save_pretrained(chemin_tmp)
+                    connecteur_s3.envoyer_repertoire(chemin_tmp, prefixe_hf)
 
     @classmethod
     def charger(cls, repertoire: Path) -> "ClassifieurTransformer":

@@ -4,8 +4,12 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
+
+if TYPE_CHECKING:
+    from arachne.data.s3 import ConnecteurS3
 
 
 class SuiveurExperience:
@@ -29,11 +33,23 @@ class SuiveurExperience:
         self,
         nom_experience: str,
         repertoire_sortie: Path = Path("models"),
+        local: bool = True,
+        connecteur_s3: "ConnecteurS3 | None" = None,
+        prefixe_s3: str = "",
     ) -> None:
         horodatage = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.id_experience = f"{nom_experience}_{horodatage}"
-        self.repertoire_experience = repertoire_sortie / self.id_experience
-        self.repertoire_experience.mkdir(parents=True, exist_ok=True)
+        self._local = local
+        self._connecteur_s3 = connecteur_s3
+        self._prefixe_s3 = f"{prefixe_s3.rstrip('/')}/{self.id_experience}"
+
+        if self._local:
+            self.repertoire_experience = repertoire_sortie / self.id_experience
+            self.repertoire_experience.mkdir(parents=True, exist_ok=True)
+        else:
+            # Répertoire fictif pour garder l'attribut accessible (plots, modèle)
+            # sans créer de dossier sur le disque.
+            self.repertoire_experience = repertoire_sortie / self.id_experience
 
         self._metriques: dict = {
             "experiment_id": self.id_experience,
@@ -47,13 +63,17 @@ class SuiveurExperience:
         }
 
     def enregistrer_config(self, config: dict) -> None:
-        """Sauvegarde la configuration YAML de l'expérience.
+        """Sauvegarde la configuration YAML de l'expérience (local et/ou S3).
 
         Args:
             config: Dictionnaire de configuration fusionné.
         """
-        with open(self.repertoire_experience / "config.yaml", "w", encoding="utf-8") as f:
-            yaml.dump(config, f, allow_unicode=True, default_flow_style=False)
+        contenu = yaml.dump(config, allow_unicode=True, default_flow_style=False).encode("utf-8")
+        if self._local:
+            self.repertoire_experience.mkdir(parents=True, exist_ok=True)
+            (self.repertoire_experience / "config.yaml").write_bytes(contenu)
+        if self._connecteur_s3 is not None:
+            self._connecteur_s3.envoyer_objet(contenu, f"{self._prefixe_s3}/config.yaml")
 
     def enregistrer_info_donnees(
         self,
@@ -116,9 +136,13 @@ class SuiveurExperience:
         return self._metriques.copy()
 
     def _sauvegarder_metriques(self) -> None:
-        """Écrit le fichier metrics.json dans le répertoire de l'expérience."""
-        with open(self.repertoire_experience / "metrics.json", "w", encoding="utf-8") as f:
-            json.dump(self._metriques, f, indent=2, ensure_ascii=False)
+        """Écrit metrics.json sur le disque local et/ou l'envoie vers S3."""
+        contenu = json.dumps(self._metriques, indent=2, ensure_ascii=False).encode("utf-8")
+        if self._local:
+            self.repertoire_experience.mkdir(parents=True, exist_ok=True)
+            (self.repertoire_experience / "metrics.json").write_bytes(contenu)
+        if self._connecteur_s3 is not None:
+            self._connecteur_s3.envoyer_objet(contenu, f"{self._prefixe_s3}/metrics.json")
 
 
 def charger_toutes_experiences(

@@ -3,8 +3,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from arachne.data.s3 import ConnecteurS3
 
 
 class ClassifieurBase(ABC):
@@ -62,11 +66,20 @@ class ClassifieurBase(ABC):
         """
 
     @abstractmethod
-    def sauvegarder(self, repertoire: Path) -> None:
-        """Sauvegarde les artefacts du modèle dans un répertoire.
+    def sauvegarder(
+        self,
+        repertoire: Path | None,
+        connecteur_s3: "ConnecteurS3 | None" = None,
+        prefixe_s3: str = "",
+    ) -> None:
+        """Sauvegarde les artefacts du modèle.
 
         Args:
-            repertoire: Chemin du répertoire de destination (créé si absent).
+            repertoire: Répertoire local de destination (créé si absent).
+                        Passer ``None`` pour désactiver la sauvegarde locale.
+            connecteur_s3: Connecteur S3 optionnel. Si fourni, les artefacts
+                           sont également (ou exclusivement) uploadés vers S3.
+            prefixe_s3: Préfixe de la clé S3, ex : ``"arachne/exp_123/model"``.
         """
 
     @classmethod

@@ -1,7 +1,9 @@
 """Calcul des métriques et génération des visualisations d'évaluation."""
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import matplotlib
 matplotlib.use("Agg")  # Backend non-interactif pour la génération de fichiers PNG sans affichage
@@ -14,6 +16,9 @@ from sklearn.metrics import (
     confusion_matrix,
     f1_score,
 )
+
+if TYPE_CHECKING:
+    from arachne.data.s3 import ConnecteurS3
 
 
 def calculer_metriques(
@@ -54,23 +59,22 @@ def calculer_metriques(
     }
 
 
-def sauvegarder_matrice_confusion(
+def _generer_matrice_confusion(
     y_reel: list[str],
     y_predit: list[str],
     classes: list[str],
-    chemin_sortie: Path,
-    titre: str = "Matrice de confusion",
-) -> None:
-    """Génère et sauvegarde la matrice de confusion en PNG.
-
-    Produit deux sous-graphiques : valeurs brutes et valeurs normalisées.
+    titre: str,
+) -> bytes:
+    """Génère la matrice de confusion et retourne les bytes PNG.
 
     Args:
         y_reel: Labels réels.
         y_predit: Labels prédits.
         classes: Liste ordonnée des classes.
-        chemin_sortie: Chemin du fichier PNG de sortie.
         titre: Titre du graphique.
+
+    Retours:
+        Contenu PNG encodé en bytes.
     """
     mc = confusion_matrix(y_reel, y_predit, labels=classes)
     mc_normalisee = mc.astype(float) / mc.sum(axis=1, keepdims=True)
@@ -95,26 +99,54 @@ def sauvegarder_matrice_confusion(
     axes[1].set_xlabel("Label prédit")
 
     plt.tight_layout()
-    chemin_sortie.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(chemin_sortie, dpi=150, bbox_inches="tight")
+    buf = BytesIO()
+    plt.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     plt.close(fig)
+    buf.seek(0)
+    return buf.read()
 
 
-def sauvegarder_graphique_metriques(
-    metriques: dict,
-    chemin_sortie: Path,
-    titre: str = "Métriques par classe",
+def sauvegarder_matrice_confusion(
+    y_reel: list[str],
+    y_predit: list[str],
+    classes: list[str],
+    chemin_sortie: Path | None,
+    titre: str = "Matrice de confusion",
+    connecteur_s3: "ConnecteurS3 | None" = None,
+    cle_s3: str = "",
 ) -> None:
-    """Génère et sauvegarde un graphique à barres des métriques par classe.
+    """Génère et sauvegarde la matrice de confusion (local et/ou S3).
+
+    Args:
+        y_reel: Labels réels.
+        y_predit: Labels prédits.
+        classes: Liste ordonnée des classes.
+        chemin_sortie: Chemin PNG local. Passer ``None`` pour ne pas écrire sur disque.
+        titre: Titre du graphique.
+        connecteur_s3: Si fourni, upload le PNG vers S3.
+        cle_s3: Clé S3 de destination.
+    """
+    png = _generer_matrice_confusion(y_reel, y_predit, classes, titre)
+    if chemin_sortie is not None:
+        chemin_sortie.parent.mkdir(parents=True, exist_ok=True)
+        chemin_sortie.write_bytes(png)
+    if connecteur_s3 is not None and cle_s3:
+        connecteur_s3.envoyer_objet(png, cle_s3)
+
+
+def _generer_graphique_metriques(metriques: dict, titre: str) -> bytes | None:
+    """Génère le graphique métriques par classe et retourne les bytes PNG.
 
     Args:
         metriques: Dictionnaire retourné par calculer_metriques().
-        chemin_sortie: Chemin du fichier PNG de sortie.
         titre: Titre du graphique.
+
+    Retours:
+        Contenu PNG encodé en bytes, ou None si pas de données par classe.
     """
     par_classe = metriques.get("par_classe", {})
     if not par_classe:
-        return
+        return None
 
     classes = list(par_classe.keys())
     precision = [par_classe[c]["precision"] for c in classes]
@@ -143,6 +175,34 @@ def sauvegarder_graphique_metriques(
     ax.legend()
 
     plt.tight_layout()
-    chemin_sortie.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(chemin_sortie, dpi=150, bbox_inches="tight")
+    buf = BytesIO()
+    plt.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+def sauvegarder_graphique_metriques(
+    metriques: dict,
+    chemin_sortie: Path | None,
+    titre: str = "Métriques par classe",
+    connecteur_s3: "ConnecteurS3 | None" = None,
+    cle_s3: str = "",
+) -> None:
+    """Génère et sauvegarde un graphique à barres des métriques (local et/ou S3).
+
+    Args:
+        metriques: Dictionnaire retourné par calculer_metriques().
+        chemin_sortie: Chemin PNG local. Passer ``None`` pour ne pas écrire sur disque.
+        titre: Titre du graphique.
+        connecteur_s3: Si fourni, upload le PNG vers S3.
+        cle_s3: Clé S3 de destination.
+    """
+    png = _generer_graphique_metriques(metriques, titre)
+    if png is None:
+        return
+    if chemin_sortie is not None:
+        chemin_sortie.parent.mkdir(parents=True, exist_ok=True)
+        chemin_sortie.write_bytes(png)
+    if connecteur_s3 is not None and cle_s3:
+        connecteur_s3.envoyer_objet(png, cle_s3)
