@@ -106,7 +106,7 @@ if page == "Vue d'ensemble":
             "CV Écart-type": "{:.4f}",
             "Durée (s)": "{:.1f}",
         }, na_rep="—").highlight_max(subset=["Accuracy", "Macro F1"], color="#c6efce"),
-        use_container_width=True,
+        width="stretch",
     )
 
     if df["Accuracy"].notna().any():
@@ -119,7 +119,7 @@ if page == "Vue d'ensemble":
         )
         fig.update_traces(texttemplate="%{text:.4f}", textposition="outside")
         fig.update_layout(height=max(300, len(df) * 50), showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 # ──────────────────────────────────────────────
@@ -164,12 +164,12 @@ elif page == "Détails":
                 color_discrete_sequence=["#4C72B0", "#DD8452", "#55A868"],
             )
             fig.update_layout(yaxis_range=[0, 1.05])
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             st.dataframe(
                 pd.DataFrame(par_classe).T.style.format(
                     "{:.4f}", subset=["precision", "rappel", "f1"]
                 ),
-                use_container_width=True,
+                width="stretch",
             )
 
     with onglet2:
@@ -198,7 +198,7 @@ elif page == "Détails":
                     annotation_text=f"Moyenne : {cv['mean_accuracy']:.4f}",
                 )
                 fig.update_layout(yaxis_range=[0, 1])
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
         else:
             st.info("Pas de validation croisée pour cette expérience.")
 
@@ -251,7 +251,7 @@ elif page == "Comparaison":
             textposition="outside",
         ))
     fig.update_layout(barmode="group", yaxis_range=[0, 1.1], height=400)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     st.subheader("F1 par classe")
     toutes_classes: set[str] = set()
@@ -274,7 +274,7 @@ elif page == "Comparaison":
             x="Classe", y="F1", color="Expérience", barmode="group",
         )
         fig2.update_layout(yaxis_range=[0, 1.1])
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width="stretch")
 
     st.subheader("Tableau récapitulatif")
     st.dataframe(
@@ -285,5 +285,5 @@ elif page == "Comparaison":
             "CV Accuracy": "{:.4f}",
             "Durée (s)": "{:.1f}",
         }, na_rep="—"),
-        use_container_width=True,
+        width="stretch",
     )
